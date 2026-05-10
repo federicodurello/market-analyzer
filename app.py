@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, render_template, request
 from analyzer import analyze_all, get_chart_data
 from assets import ASSETS
+from backtest import backtest_all as _backtest_all
 import threading
 import time
 from datetime import datetime, timedelta
@@ -12,6 +13,9 @@ DEFAULT_PERIOD = "2y"
 _cache      = {"data": {}, "last_update": None, "next_update": None, "loading": True}
 _cache_lock = threading.Lock()
 _ready      = threading.Event()
+
+_bt_cache = {"data": {}, "ready": False}
+_bt_lock  = threading.Lock()
 
 
 def _next_monday_9am() -> datetime:
@@ -39,14 +43,25 @@ def _do_refresh(period: str = DEFAULT_PERIOD):
     _ready.set()
 
 
+def _run_backtest():
+    with _bt_lock:
+        _bt_cache["ready"] = False
+    results = _backtest_all(ASSETS)
+    with _bt_lock:
+        _bt_cache["data"]  = results
+        _bt_cache["ready"] = True
+
+
 def _bg_loop():
     _do_refresh(DEFAULT_PERIOD)
+    threading.Thread(target=_run_backtest, daemon=True).start()
     while True:
         next_mon = _next_monday_9am()
         wait = (next_mon - datetime.now()).total_seconds()
         if wait > 0:
             time.sleep(wait)
         _do_refresh(DEFAULT_PERIOD)
+        threading.Thread(target=_run_backtest, daemon=True).start()
 
 
 threading.Thread(target=_bg_loop, daemon=True).start()
@@ -109,6 +124,24 @@ def api_refresh():
     period = request.args.get("period", DEFAULT_PERIOD)
     threading.Thread(target=_do_refresh, args=(period,), daemon=True).start()
     return jsonify({"status": "refreshing"})
+
+
+@app.route("/api/backtest")
+def api_backtest():
+    with _bt_lock:
+        return jsonify({
+            "ready": _bt_cache["ready"],
+            "data":  _bt_cache["data"],
+        })
+
+
+@app.route("/api/backtest/<path:ticker>")
+def api_backtest_ticker(ticker):
+    with _bt_lock:
+        return jsonify({
+            "ready": _bt_cache["ready"],
+            "data":  _bt_cache["data"].get(ticker),
+        })
 
 
 if __name__ == "__main__":
