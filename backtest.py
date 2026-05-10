@@ -13,8 +13,8 @@ def _empty() -> dict:
 
 def backtest_asset(df: pd.DataFrame) -> dict:
     """
-    Vectorized backtest of Alta Confidenza (7/7) on weekly bars — no lookahead.
-    Signal = all 7 criteria from compute_rischio_basso satisfied simultaneously.
+    Vectorized backtest of Alta Confidenza (>=5/7) on weekly bars — no lookahead.
+    Signal = at least 5 of 7 criteria from compute_rischio_basso satisfied.
     Measures next-week return after each signal.
     """
     if len(df) < 55:
@@ -43,7 +43,7 @@ def backtest_asset(df: pd.DataFrame) -> dict:
     vol_avg   = volume.rolling(10, min_periods=5).mean().shift(1)
     vol_ratio = (volume / vol_avg).where(vol_avg > 0, 1.0).fillna(1.0)
 
-    # Alta Confidenza — same 7 criteria as compute_rischio_basso
+    # Alta Confidenza — same 7 criteria as compute_rischio_basso, signal at >=5
     c1 = (rsi_s >= 30) & (rsi_s <= 45)
     c2 = (cci_s < -100) & (cci_s > cci_s.shift(1))
     c3 = (stoch_k < 20) & (stoch_k > stoch_k.shift(1))
@@ -52,7 +52,9 @@ def backtest_asset(df: pd.DataFrame) -> dict:
     c6 = macd_hist > macd_hist.shift(1)
     c7 = bb_pos < 10
 
-    signal   = c1 & c2 & c3 & c4 & c5 & c6 & c7
+    score  = c1.astype(int) + c2.astype(int) + c3.astype(int) + c4.astype(int) + \
+             c5.astype(int) + c6.astype(int) + c7.astype(int)
+    signal = score >= 5
     next_ret = close.pct_change().shift(-1) * 100   # next-bar return, no lookahead
     valid    = signal & next_ret.notna()
 

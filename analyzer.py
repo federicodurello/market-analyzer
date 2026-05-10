@@ -190,8 +190,8 @@ def compute_semaforo(ind: dict) -> dict:
 
 def compute_rischio_basso(ind: dict) -> dict:
     """
-    7 criteri specifici per segnale di entrata a basso rischio.
-    7/7 -> Alta Confidenza, 6/7 -> Rischio Basso, <=5 -> nessun pulsante.
+    7 criteri specifici per segnale Alta Confidenza.
+    >=5/7 -> Alta Confidenza, <5 -> nessun pulsante.
     """
     criteria = {
         "RSI 30-45":          30 <= ind["rsi"] <= 45,
@@ -203,12 +203,10 @@ def compute_rischio_basso(ind: dict) -> dict:
         "BB banda inferiore": ind["bb_position"] < 10,
     }
     count = sum(criteria.values())
-    if count == 7:
-        return {"show": True,  "level": "alta",  "label": "Alta Confidenza", "count": count, "criteria": criteria}
-    elif count == 6:
-        return {"show": True,  "level": "basso", "label": "Rischio Basso",   "count": count, "criteria": criteria}
+    if count >= 5:
+        return {"show": True,  "level": "alta", "label": "Alta Confidenza", "count": count, "criteria": criteria}
     else:
-        return {"show": False, "level": "none",  "label": "",                "count": count, "criteria": criteria}
+        return {"show": False, "level": "none", "label": "",                "count": count, "criteria": criteria}
 
 
 def compute_score(ind: dict) -> int:
