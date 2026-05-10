@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Market Analyzer — Scalable Capital</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --accent: #6366f1;
+    --green: #22c55e;
+    --yellow: #fbbf24;
+    --red: #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; font-size: 14px; }
+
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; flex: 1; }
+
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  select, button {
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); padding: 7px 14px; border-radius: 8px;
+    font-size: 13px; cursor: pointer; outline: none;
+  }
+  button.primary {
+    background: var(--accent); border-color: var(--accent);
+    color: #fff; font-weight: 600;
+  }
+  button:hover { opacity: 0.85; }
+
+  .status-bar {
+    padding: 8px 24px; font-size: 12px; color: var(--muted);
+    border-bottom: 1px solid var(--border); min-height: 30px;
+  }
+
+  main { padding: 20px 24px; }
+
+  .table-wrap { overflow-x: auto; border-radius: 12px; border: 1px solid var(--border); }
+  table { width: 100%; border-collapse: collapse; }
+  thead tr { background: var(--surface); }
+  th {
+    padding: 11px 14px; text-align: left; font-size: 11px;
+    font-weight: 600; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.5px; white-space: nowrap; cursor: pointer;
+    user-select: none;
+  }
+  th:hover { color: var(--text); }
+  th.sorted { color: var(--accent); }
+  td { padding: 11px 14px; border-top: 1px solid var(--border); white-space: nowrap; }
+  tr:hover td { background: rgba(255,255,255,0.03); cursor: pointer; }
+
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.3px;
+  }
+  .score-bar-wrap { display: flex; align-items: center; gap: 10px; }
+  .score-bar-bg {
+    flex: 1; height: 6px; background: var(--border);
+    border-radius: 3px; overflow: hidden; min-width: 80px;
+  }
+  .score-bar { height: 100%; border-radius: 3px; transition: width 0.4s; }
+
+  .cat-chip {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; background: rgba(99,102,241,0.15); color: #a5b4fc;
+  }
+
+  /* Modal chart */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7); z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 24px; width: 92vw; max-width: 960px;
+    max-height: 90vh; overflow-y: auto; position: relative;
+  }
+  .modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+  .modal-header h2 { font-size: 16px; }
+  .modal-close { background: none; border: none; color: var(--muted); font-size: 22px; cursor: pointer; padding: 0 4px; }
+  .charts-grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
+  .chart-box { background: var(--bg); border-radius: 10px; padding: 16px; }
+  .chart-box h3 { font-size: 12px; color: var(--muted); margin-bottom: 12px; text-transform: uppercase; }
+  .chart-box canvas { max-height: 180px; }
+
+  .indicators-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px; margin-top: 20px;
+  }
+  .ind-card {
+    background: var(--bg); border-radius: 10px; padding: 14px;
+    border: 1px solid var(--border);
+  }
+  .ind-card .label { font-size: 11px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; }
+  .ind-card .value { font-size: 20px; font-weight: 700; }
+  .ind-card .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+  .loading { text-align: center; padding: 60px; color: var(--muted); }
+  .spinner {
+    display: inline-block; width: 32px; height: 32px;
+    border: 3px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.7s linear infinite; margin-bottom: 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .disclaimer {
+    margin-top: 24px; padding: 12px 16px; border-radius: 8px;
+    background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.2);
+    color: var(--muted); font-size: 12px; line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Market Analyzer</h1>
+  <div class="controls">
+    <select id="catFilter"><option value="all">Tutte le categorie</option></select>
+    <select id="periodSelect">
+      <option value="1mo">1 mese</option>
+      <option value="3mo">3 mesi</option>
+      <option value="6mo" selected>6 mesi</option>
+      <option value="1y">1 anno</option>
+      <option value="2y">2 anni</option>
+    </select>
+    <button class="primary" id="refreshBtn">Aggiorna analisi</button>
+  </div>
+</header>
+
+<div class="status-bar" id="statusBar">Pronto. Clicca "Aggiorna analisi" per iniziare.</div>
+
+<main>
+  <div id="tableContainer">
+    <div class="loading">
+      <div style="color:var(--muted)">Clicca <strong>Aggiorna analisi</strong> per caricare i dati di mercato.</div>
+    </div>
+  </div>
+
+  <div class="disclaimer">
+    ⚠️ Questo strumento è solo a scopo informativo e didattico. Non costituisce consulenza finanziaria.
+    I segnali tecnici non garantiscono rendimenti futuri. Investi sempre con consapevolezza del rischio.
+  </div>
+</main>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <h2 id="modalTitle">—</h2>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px" id="modalSubtitle"></div>
+      </div>
+      <button class="modal-close" id="modalClose">✕</button>
+    </div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+let allData = [];
+let sortKey = "score";
+let sortDir = -1;
+let chartInstances = {};
+
+const periodSelect = document.getElementById("periodSelect");
+const catFilter = document.getElementById("catFilter");
+const refreshBtn = document.getElementById("refreshBtn");
+const statusBar = document.getElementById("statusBar");
+const tableContainer = document.getElementById("tableContainer");
+
+// Load categories
+fetch("/api/categories").then(r => r.json()).then(cats => {
+  cats.forEach(c => {
+    const o = document.createElement("option");
+    o.value = c;
+    o.textContent = c === "all" ? "Tutte le categorie" : c;
+    catFilter.appendChild(o);
+  });
+});
+
+refreshBtn.addEventListener("click", loadData);
+catFilter.addEventListener("change", renderTable);
+window.addEventListener("DOMContentLoaded", loadData);
+document.getElementById("modalClose").addEventListener("click", closeModal);
+document.getElementById("modalOverlay").addEventListener("click", e => {
+  if (e.target === document.getElementById("modalOverlay")) closeModal();
+});
+
+async function loadData() {
+  const period = periodSelect.value;
+  refreshBtn.disabled = true;
+  statusBar.textContent = "Scaricamento dati di mercato in corso… (può richiedere 20-40 secondi)";
+  tableContainer.innerHTML = `<div class="loading"><div class="spinner"></div><div>Analisi in corso…</div></div>`;
+
+  try {
+    const res = await fetch(`/api/analyze?period=${period}`);
+    allData = await res.json();
+    const ts = new Date().toLocaleTimeString("it-IT");
+    statusBar.textContent = `Ultimo aggiornamento: ${ts} — ${allData.length} asset analizzati`;
+    renderTable();
+  } catch (e) {
+    statusBar.textContent = "Errore nel caricamento dati. Riprova.";
+    tableContainer.innerHTML = `<div class="loading" style="color:var(--red)">Errore connessione al server.</div>`;
+  } finally {
+    refreshBtn.disabled = false;
+  }
+}
+
+function renderTable() {
+  const cat = catFilter.value;
+  let data = cat === "all" ? allData : allData.filter(d => d.category === cat);
+
+  data = [...data].sort((a, b) => {
+    let va = a[sortKey], vb = b[sortKey];
+    if (typeof va === "string") return sortDir * va.localeCompare(vb);
+    return sortDir * (vb - va);
+  });
+
+  if (!data.length) {
+    tableContainer.innerHTML = `<div class="loading">Nessun dato disponibile.</div>`;
+    return;
+  }
+
+  const cols = [
+    { key: "score",        label: "Score" },
+    { key: "name",         label: "Asset" },
+    { key: "category",     label: "Categoria" },
+    { key: "signal",       label: "Segnale" },
+    { key: "price",        label: "Prezzo" },
+    { key: "rsi",          label: "RSI (14)" },
+    { key: "cci",          label: "CCI (20)" },
+    { key: "bb_position",  label: "BB %" },
+    { key: "pct_from_high","label": "% da Max" },
+    { key: "pct_from_low", "label": "% da Min" },
+    { key: "vol_ratio",    label: "Vol ×" },
+  ];
+
+  let html = `<div class="table-wrap"><table><thead><tr>`;
+  cols.forEach(c => {
+    const cls = sortKey === c.key ? "sorted" : "";
+    html += `<th class="${cls}" data-key="${c.key}">${c.label}${sortKey===c.key?(sortDir>0?" ↑":" ↓"):""}</th>`;
+  });
+  html += `</tr></thead><tbody>`;
+
+  data.forEach(row => {
+    const macdIcon = row.macd_bullish ? "↑" : "↓";
+    const macdColor = row.macd_bullish ? "var(--green)" : "var(--red)";
+    html += `<tr data-ticker="${row.ticker}" data-name="${row.name}">
+      <td>
+        <div class="score-bar-wrap">
+          <span style="font-weight:700;min-width:26px">${row.score}</span>
+          <div class="score-bar-bg">
+            <div class="score-bar" style="width:${row.score}%;background:${row.color}"></div>
+          </div>
+        </div>
+      </td>
+      <td style="font-weight:600">${row.name}<br><span style="color:var(--muted);font-size:11px">${row.ticker}</span></td>
+      <td><span class="cat-chip">${row.category}</span></td>
+      <td><span class="badge" style="background:${row.color}22;color:${row.color}">${row.signal}</span></td>
+      <td>${row.price}</td>
+      <td style="color:${rsiColor(row.rsi)};font-weight:600">${row.rsi}</td>
+      <td style="color:${cciColor(row.cci)};font-weight:600">${row.cci}</td>
+      <td style="color:${bbColor(row.bb_position)};font-weight:600">${row.bb_position}%</td>
+      <td style="color:var(--red)">${row.pct_from_high}%</td>
+      <td style="color:var(--green)">${row.pct_from_low}%</td>
+      <td style="color:${row.vol_ratio>1.5?'var(--yellow)':'var(--muted)'}">${row.vol_ratio}×</td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div>`;
+  tableContainer.innerHTML = html;
+
+  // Sort headers
+  document.querySelectorAll("th[data-key]").forEach(th => {
+    th.addEventListener("click", () => {
+      const key = th.dataset.key;
+      if (sortKey === key) sortDir *= -1;
+      else { sortKey = key; sortDir = -1; }
+      renderTable();
+    });
+  });
+
+  // Row click → chart modal
+  document.querySelectorAll("tbody tr").forEach(tr => {
+    tr.addEventListener("click", () => {
+      const ticker = tr.dataset.ticker;
+      const name = tr.dataset.name;
+      const rowData = data.find(d => d.ticker === ticker);
+      openModal(ticker, name, rowData);
+    });
+  });
+}
+
+function rsiColor(v) {
+  if (v < 30) return "var(--green)";
+  if (v > 70) return "var(--red)";
+  return "var(--text)";
+}
+function cciColor(v) {
+  if (v < -200) return "var(--green)";
+  if (v < -100) return "var(--yellow)";
+  if (v > 100)  return "var(--red)";
+  return "var(--text)";
+}
+function bbColor(v) {
+  if (v < 20) return "var(--green)";
+  if (v > 80) return "var(--red)";
+  return "var(--text)";
+}
+
+async function openModal(ticker, name, rowData) {
+  document.getElementById("modalTitle").textContent = name;
+  document.getElementById("modalSubtitle").textContent = ticker;
+  document.getElementById("modalOverlay").classList.add("open");
+  document.getElementById("modalBody").innerHTML = `<div class="loading"><div class="spinner"></div><div>Caricamento grafici…</div></div>`;
+
+  // Destroy previous charts
+  Object.values(chartInstances).forEach(c => c.destroy());
+  chartInstances = {};
+
+  const period = periodSelect.value;
+  const res = await fetch(`/api/chart/${ticker}?period=${period}`);
+  const d = await res.json();
+
+  if (!d.dates) {
+    document.getElementById("modalBody").innerHTML = `<div style="color:var(--muted)">Dati non disponibili.</div>`;
+    return;
+  }
+
+  const inds = `
+    <div class="indicators-grid">
+      <div class="ind-card">
+        <div class="label">RSI (14)</div>
+        <div class="value" style="color:${rsiColor(rowData.rsi)}">${rowData.rsi}</div>
+        <div class="hint">${rowData.rsi<30?"Ipervenduto ✓":rowData.rsi>70?"Ipercomprato ✗":"Neutro"}</div>
+      </div>
+      <div class="ind-card">
+        <div class="label">CCI (20)</div>
+        <div class="value" style="color:${cciColor(rowData.cci)}">${rowData.cci}</div>
+        <div class="hint">${rowData.cci<-200?"Ipervenduto ✓":rowData.cci<-100?"Zona grigia ⚠":rowData.cci>100?"Ipercomprato ✗":"Neutrale"}</div>
+      </div>
+      <div class="ind-card">
+        <div class="label">MACD</div>
+        <div class="value" style="color:${rowData.macd_bullish?'var(--green)':'var(--red)'}">${rowData.macd_bullish?"Bullish ↑":"Bearish ↓"}</div>
+        <div class="hint">Segnale: ${rowData.macd_signal}</div>
+      </div>
+      <div class="ind-card">
+        <div class="label">BB Posizione</div>
+        <div class="value" style="color:${bbColor(rowData.bb_position)}">${rowData.bb_position}%</div>
+        <div class="hint">${rowData.bb_position<20?"Vicino al fondo ✓":rowData.bb_position>80?"Vicino al tetto ✗":"Zona centrale"}</div>
+      </div>
+      <div class="ind-card">
+        <div class="label">Volume</div>
+        <div class="value" style="color:${rowData.vol_ratio>1.5?'var(--yellow)':'var(--text)'}">${rowData.vol_ratio}×</div>
+        <div class="hint">vs media 20gg</div>
+      </div>
+      <div class="ind-card">
+        <div class="label">% da Max 52W</div>
+        <div class="value" style="color:var(--red)">${rowData.pct_from_high}%</div>
+        <div class="hint">Max: ${rowData.high_52w}</div>
+      </div>
+      <div class="ind-card">
+        <div class="label">% da Min 52W</div>
+        <div class="value" style="color:var(--green)">${rowData.pct_from_low}%</div>
+        <div class="hint">Min: ${rowData.low_52w}</div>
+      </div>
+      <div class="ind-card">
+        <div class="label">Score</div>
+        <div class="value" style="color:${rowData.color}">${rowData.score}/100</div>
+        <div class="hint">${rowData.signal}</div>
+      </div>
+    </div>`;
+
+  document.getElementById("modalBody").innerHTML = `
+    ${inds}
+    <div class="charts-grid" style="margin-top:20px">
+      <div class="chart-box"><h3>Prezzo + Bollinger Bands</h3><canvas id="chartPrice"></canvas></div>
+      <div class="chart-box"><h3>RSI (14)</h3><canvas id="chartRsi"></canvas></div>
+      <div class="chart-box"><h3>CCI (20)</h3><canvas id="chartCci"></canvas></div>
+      <div class="chart-box"><h3>MACD</h3><canvas id="chartMacd"></canvas></div>
+    </div>`;
+
+  const gridColor = "rgba(255,255,255,0.06)";
+  const tickColor = "#64748b";
+  const commonScales = {
+    x: { ticks: { color: tickColor, maxTicksLimit: 8 }, grid: { color: gridColor } },
+    y: { ticks: { color: tickColor }, grid: { color: gridColor } }
+  };
+
+  chartInstances.price = new Chart(document.getElementById("chartPrice"), {
+    type: "line",
+    data: {
+      labels: d.dates,
+      datasets: [
+        { label: "Prezzo", data: d.close, borderColor: "#6366f1", borderWidth: 2, pointRadius: 0, tension: 0.1 },
+        { label: "BB Upper", data: d.bb_upper, borderColor: "#f87171", borderWidth: 1, borderDash: [4,2], pointRadius: 0, fill: false },
+        { label: "BB Mid", data: d.bb_mid, borderColor: "#fbbf24", borderWidth: 1, borderDash: [2,2], pointRadius: 0, fill: false },
+        { label: "BB Lower", data: d.bb_lower, borderColor: "#22c55e", borderWidth: 1, borderDash: [4,2], pointRadius: 0, fill: false },
+      ]
+    },
+    options: { responsive: true, plugins: { legend: { labels: { color: tickColor, boxWidth: 12 } } }, scales: commonScales }
+  });
+
+  chartInstances.rsi = new Chart(document.getElementById("chartRsi"), {
+    type: "line",
+    data: {
+      labels: d.dates,
+      datasets: [{ label: "RSI", data: d.rsi, borderColor: "#a78bfa", borderWidth: 2, pointRadius: 0, tension: 0.1 }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: tickColor, boxWidth: 12 } },
+        annotation: {} },
+      scales: { ...commonScales, y: { ...commonScales.y, min: 0, max: 100,
+        ticks: { color: tickColor, callback: v => v === 30 || v === 70 || v === 50 ? v : "" }
+      }}
+    }
+  });
+
+  chartInstances.cci = new Chart(document.getElementById("chartCci"), {
+    type: "line",
+    data: {
+      labels: d.dates,
+      datasets: [{ label: "CCI", data: d.cci, borderColor: "#2dd4bf", borderWidth: 2, pointRadius: 0, tension: 0.1 }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: tickColor, boxWidth: 12 } } },
+      scales: { ...commonScales, y: {
+        ...commonScales.y,
+        ticks: { color: tickColor, callback: v => [-200,-100,0,100,200].includes(v) ? v : "" }
+      }}
+    }
+  });
+
+  chartInstances.macd = new Chart(document.getElementById("chartMacd"), {
+    type: "line",
+    data: {
+      labels: d.dates,
+      datasets: [
+        { label: "MACD", data: d.macd, borderColor: "#6366f1", borderWidth: 2, pointRadius: 0, tension: 0.1 },
+        { label: "Signal", data: d.macd_signal, borderColor: "#f97316", borderWidth: 1.5, borderDash: [4,2], pointRadius: 0, tension: 0.1 },
+      ]
+    },
+    options: { responsive: true, plugins: { legend: { labels: { color: tickColor, boxWidth: 12 } } }, scales: commonScales }
+  });
+}
+
+function closeModal() {
+  document.getElementById("modalOverlay").classList.remove("open");
+}
+</script>
+</body>
+</html>
