@@ -3,41 +3,46 @@ import pandas as pd
 import ta
 
 
-def _flatten_columns(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    df.columns = [str(c).strip() for c in df.columns]
-    # auto_adjust=True può aggiungere 'Adj Close': rinomina in Close se manca
-    if "Close" not in df.columns and "Adj Close" in df.columns:
-        df = df.rename(columns={"Adj Close": "Close"})
-    return df
-
-
 def fetch_all(tickers: list[str], period: str = "6mo") -> dict[str, pd.DataFrame]:
-    """Scarica tutti i ticker in un'unica chiamata per evitare rate limit."""
-    raw = yf.download(
-        tickers,
-        period=period,
-        interval="1d",
-        progress=False,
-        auto_adjust=True,
-        group_by="ticker",
-    )
+    """Single batch download — no group_by to avoid column structure issues."""
+    try:
+        raw = yf.download(
+            tickers,
+            period=period,
+            interval="1d",
+            progress=False,
+            auto_adjust=True,
+        )
+    except Exception:
+        return {}
+
+    if raw.empty:
+        return {}
 
     result = {}
 
     if len(tickers) == 1:
-        df = _flatten_columns(raw.copy(), tickers[0])
+        df = raw.copy()
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df.columns = [str(c).strip() for c in df.columns]
+        if "Close" not in df.columns and "Adj Close" in df.columns:
+            df.rename(columns={"Adj Close": "Close"}, inplace=True)
         df.dropna(subset=["Close"], inplace=True)
         if len(df) >= 30:
             result[tickers[0]] = df
         return result
 
+    # Multiple tickers: raw has MultiIndex columns (price_type, ticker)
     for ticker in tickers:
         try:
-            df = raw[ticker].copy()
-            df = _flatten_columns(df, ticker)
-            df.dropna(subset=["Close"], inplace=True)
+            df = pd.DataFrame({
+                "Open":   raw["Open"][ticker],
+                "High":   raw["High"][ticker],
+                "Low":    raw["Low"][ticker],
+                "Close":  raw["Close"][ticker],
+                "Volume": raw["Volume"][ticker],
+            }).dropna(subset=["Close"])
             if len(df) >= 30:
                 result[ticker] = df
         except Exception:
@@ -47,134 +52,148 @@ def fetch_all(tickers: list[str], period: str = "6mo") -> dict[str, pd.DataFrame
 
 
 def fetch_data(ticker: str, period: str = "6mo") -> pd.DataFrame:
-    data = fetch_all([ticker], period)
-    return data.get(ticker, pd.DataFrame())
+    return fetch_all([ticker], period).get(ticker, pd.DataFrame())
+
+
+def _clean(series, scale: float = 1.0) -> list:
+    return [round(float(v) * scale, 4) if pd.notna(v) else None for v in series]
 
 
 def compute_indicators(df: pd.DataFrame) -> dict:
-    close = df["Close"]
-    high = df["High"]
-    low = df["Low"]
+    close  = df["Close"]
+    high   = df["High"]
+    low    = df["Low"]
     volume = df["Volume"]
 
-    rsi = ta.momentum.RSIIndicator(close, window=14).rsi()
-    cci = ta.trend.CCIIndicator(high, low, close, window=20).cci()
-    macd_obj = ta.trend.MACD(close)
-    macd_line = macd_obj.macd()
-    macd_signal = macd_obj.macd_signal()
-    bb = ta.volatility.BollingerBands(close, window=20, window_dev=2)
-    bb_upper = bb.bollinger_hband()
-    bb_lower = bb.bollinger_lband()
-    bb_mid = bb.bollinger_mavg()
+    rsi_s   = ta.momentum.RSIIndicator(close, window=14).rsi()
+    cci_s   = ta.trend.CCIIndicator(high, low, close, window=20).cci()
+    macd_o  = ta.trend.MACD(close)
+    bb      = ta.volatility.BollingerBands(close, window=20, window_dev=2)
+    ema20_s = ta.trend.EMAIndicator(close, window=20).ema_indicator()
+    ema50_s = ta.trend.EMAIndicator(close, window=50).ema_indicator()
+    ema200_s= ta.trend.EMAIndicator(close, window=200).ema_indicator()
+    stoch_o = ta.momentum.StochRSIIndicator(close, window=14, smooth1=3, smooth2=3)
+    atr_s   = ta.volatility.AverageTrueRange(high, low, close, window=14).average_true_range()
 
-    last_close = float(close.iloc[-1])
-    last_rsi = float(rsi.iloc[-1])
-    last_cci = float(cci.iloc[-1])
-    last_macd = float(macd_line.iloc[-1])
-    last_signal = float(macd_signal.iloc[-1])
-    last_bb_lower = float(bb_lower.iloc[-1])
-    last_bb_upper = float(bb_upper.iloc[-1])
-    last_bb_mid = float(bb_mid.iloc[-1])
+    def last(s):
+        v = s.iloc[-1]
+        return float(v) if pd.notna(v) else None
 
-    avg_vol = float(volume.iloc[-21:-1].mean()) if len(volume) > 21 else float(volume.mean())
-    last_vol = float(volume.iloc[-1])
-    vol_ratio = last_vol / avg_vol if avg_vol > 0 else 1.0
+    price      = last(close)
+    rsi        = last(rsi_s)
+    cci        = last(cci_s)
+    macd       = last(macd_o.macd())
+    macd_sig   = last(macd_o.macd_signal())
+    bb_lower   = last(bb.bollinger_lband())
+    bb_upper   = last(bb.bollinger_hband())
+    bb_mid     = last(bb.bollinger_mavg())
+    ema20      = last(ema20_s)
+    ema50      = last(ema50_s)
+    ema200     = last(ema200_s)
+    stoch_k    = last(stoch_o.stochrsi_k())
+    stoch_d    = last(stoch_o.stochrsi_d())
+    atr        = last(atr_s)
+
+    avg_vol  = float(volume.iloc[-21:-1].mean()) if len(volume) > 21 else float(volume.mean())
+    vol_ratio = float(volume.iloc[-1]) / avg_vol if avg_vol > 0 else 1.0
 
     high_52 = float(close.tail(252).max())
-    low_52 = float(close.tail(252).min())
-    pct_from_high = ((last_close - high_52) / high_52) * 100
-    pct_from_low = ((last_close - low_52) / low_52) * 100
+    low_52  = float(close.tail(252).min())
+    pct_from_high = ((price - high_52) / high_52) * 100
+    pct_from_low  = ((price - low_52)  / low_52)  * 100
 
-    bb_range = last_bb_upper - last_bb_lower
-    bb_pos = ((last_close - last_bb_lower) / bb_range * 100) if bb_range > 0 else 50
+    bb_range = (bb_upper or 0) - (bb_lower or 0)
+    bb_pos   = ((price - bb_lower) / bb_range * 100) if bb_range > 0 else 50
+
+    macd_bullish  = (macd or 0) > (macd_sig or 0)
+    ema_bullish   = (ema20 or 0) > (ema50 or 0)
+    golden_cross  = ema200 is not None and (ema20 or 0) > (ema50 or 0) > ema200
+    stoch_k_pct   = (stoch_k or 0.5) * 100
+    stoch_d_pct   = (stoch_d or 0.5) * 100
 
     return {
-        "price": round(last_close, 4),
-        "rsi": round(last_rsi, 2),
-        "cci": round(last_cci, 2),
-        "macd": round(last_macd, 4),
-        "macd_signal": round(last_signal, 4),
-        "macd_bullish": last_macd > last_signal,
-        "bb_lower": round(last_bb_lower, 4),
-        "bb_upper": round(last_bb_upper, 4),
-        "bb_mid": round(last_bb_mid, 4),
-        "bb_position": round(bb_pos, 1),
-        "vol_ratio": round(vol_ratio, 2),
-        "high_52w": round(high_52, 4),
-        "low_52w": round(low_52, 4),
-        "pct_from_high": round(pct_from_high, 2),
-        "pct_from_low": round(pct_from_low, 2),
+        "price":          round(price, 4),
+        "rsi":            round(rsi or 50, 2),
+        "cci":            round(cci or 0, 2),
+        "macd":           round(macd or 0, 6),
+        "macd_signal":    round(macd_sig or 0, 6),
+        "macd_bullish":   macd_bullish,
+        "bb_lower":       round(bb_lower or 0, 4),
+        "bb_upper":       round(bb_upper or 0, 4),
+        "bb_mid":         round(bb_mid or 0, 4),
+        "bb_position":    round(bb_pos, 1),
+        "ema20":          round(ema20 or 0, 4),
+        "ema50":          round(ema50 or 0, 4),
+        "ema200":         round(ema200, 4) if ema200 else None,
+        "golden_cross":   golden_cross,
+        "ema_bullish":    ema_bullish,
+        "stoch_k":        round(stoch_k_pct, 2),
+        "stoch_d":        round(stoch_d_pct, 2),
+        "atr":            round(atr or 0, 4),
+        "atr_pct":        round(((atr or 0) / price) * 100, 2),
+        "vol_ratio":      round(vol_ratio, 2),
+        "high_52w":       round(high_52, 4),
+        "low_52w":        round(low_52, 4),
+        "pct_from_high":  round(pct_from_high, 2),
+        "pct_from_low":   round(pct_from_low, 2),
     }
 
 
+def compute_semaforo(ind: dict) -> dict:
+    """
+    7 condizioni di acquisto. Verde=4+, Giallo=2-3, Rosso=0-1.
+    """
+    conds = {
+        "RSI<40":     ind["rsi"] < 40,
+        "CCI<-100":   ind["cci"] < -100,
+        "MACD":       ind["macd_bullish"],
+        "BB<30%":     ind["bb_position"] < 30,
+        "EMA bull":   ind["ema_bullish"],
+        "StochK<20":  ind["stoch_k"] < 20,
+        "Vol×1.5":    ind["vol_ratio"] > 1.5,
+    }
+    count = sum(conds.values())
+    if count >= 4:
+        return {"level": "green",  "color": "#22c55e", "label": "COMPRA",  "count": count, "details": conds}
+    elif count >= 2:
+        return {"level": "yellow", "color": "#fbbf24", "label": "NEUTRO",  "count": count, "details": conds}
+    else:
+        return {"level": "red",    "color": "#ef4444", "label": "ATTENDI", "count": count, "details": conds}
+
+
 def compute_score(ind: dict) -> int:
-    """
-    Score 0-100 da 5 indicatori tecnici convergenti.
-
-    RSI  (0-25): ipervenduto < 30 = acquisto forte
-    CCI  (0-25): sotto -200 = ipervenduto valido (soglia conservativa)
-    BB   (0-20): prezzo vicino banda inferiore
-    MACD (0-15): crossover bullish
-    52W  (0-15): vicinanza al minimo annuale
-    """
     score = 0
-
     rsi = ind["rsi"]
-    if rsi < 30:
-        score += 25
-    elif rsi < 40:
-        score += 18
-    elif rsi < 50:
-        score += 8
-
+    if rsi < 30:   score += 25
+    elif rsi < 40: score += 18
+    elif rsi < 50: score += 8
     cci = ind["cci"]
-    if cci < -200:
-        score += 25
-    elif cci < -150:
-        score += 10
-
-    bb_pos = ind["bb_position"]
-    if bb_pos < 10:
-        score += 20
-    elif bb_pos < 25:
-        score += 13
-    elif bb_pos < 40:
-        score += 6
-
-    if ind["macd_bullish"]:
-        score += 15
-
-    pct_from_low = ind["pct_from_low"]
-    if pct_from_low < 5:
-        score += 15
-    elif pct_from_low < 15:
-        score += 8
-    elif pct_from_low < 25:
-        score += 3
-
+    if cci < -200:   score += 25
+    elif cci < -150: score += 10
+    bb = ind["bb_position"]
+    if bb < 10:   score += 20
+    elif bb < 25: score += 13
+    elif bb < 40: score += 6
+    if ind["macd_bullish"]: score += 15
+    pl = ind["pct_from_low"]
+    if pl < 5:   score += 15
+    elif pl < 15: score += 8
+    elif pl < 25: score += 3
     return min(score, 100)
 
 
 def signal_label(score: int) -> str:
-    if score >= 70:
-        return "FORTE ACQUISTO"
-    elif score >= 50:
-        return "ACQUISTO"
-    elif score >= 30:
-        return "NEUTRO"
-    else:
-        return "ATTENDI"
+    if score >= 70: return "FORTE ACQUISTO"
+    if score >= 50: return "ACQUISTO"
+    if score >= 30: return "NEUTRO"
+    return "ATTENDI"
 
 
 def signal_color(score: int) -> str:
-    if score >= 70:
-        return "#22c55e"
-    elif score >= 50:
-        return "#86efac"
-    elif score >= 30:
-        return "#fbbf24"
-    else:
-        return "#f87171"
+    if score >= 70: return "#22c55e"
+    if score >= 50: return "#86efac"
+    if score >= 30: return "#fbbf24"
+    return "#f87171"
 
 
 def get_chart_data(ticker: str, period: str = "6mo") -> dict:
@@ -182,54 +201,91 @@ def get_chart_data(ticker: str, period: str = "6mo") -> dict:
     if df.empty:
         return {}
 
-    close = df["Close"]
-    high = df["High"]
-    low = df["Low"]
+    close  = df["Close"]
+    high   = df["High"]
+    low    = df["Low"]
+    open_  = df["Open"]
+    volume = df["Volume"]
 
-    rsi_series = ta.momentum.RSIIndicator(close, window=14).rsi()
-    cci_series = ta.trend.CCIIndicator(high, low, close, window=20).cci()
-    macd_obj = ta.trend.MACD(close)
-    macd_line = macd_obj.macd()
-    macd_signal_line = macd_obj.macd_signal()
-    bb = ta.volatility.BollingerBands(close, window=20, window_dev=2)
+    rsi_s    = ta.momentum.RSIIndicator(close, window=14).rsi()
+    cci_s    = ta.trend.CCIIndicator(high, low, close, window=20).cci()
+    macd_o   = ta.trend.MACD(close)
+    bb       = ta.volatility.BollingerBands(close, window=20, window_dev=2)
+    ema20_s  = ta.trend.EMAIndicator(close, window=20).ema_indicator()
+    ema50_s  = ta.trend.EMAIndicator(close, window=50).ema_indicator()
+    ema200_s = ta.trend.EMAIndicator(close, window=200).ema_indicator()
+    stoch_o  = ta.momentum.StochRSIIndicator(close, window=14, smooth1=3, smooth2=3)
+    vol_ma20 = volume.rolling(20).mean()
 
     dates = [d.strftime("%Y-%m-%d") for d in df.index]
 
-    def clean(series):
-        return [round(float(v), 4) if pd.notna(v) else None for v in series]
+    ohlcv = []
+    for i, date in enumerate(dates):
+        o, h, l, c = open_.iloc[i], high.iloc[i], low.iloc[i], close.iloc[i]
+        if all(pd.notna(x) for x in [o, h, l, c]):
+            ohlcv.append({"time": date,
+                          "open":  round(float(o), 4),
+                          "high":  round(float(h), 4),
+                          "low":   round(float(l), 4),
+                          "close": round(float(c), 4)})
+
+    vol_data = [{"time": dates[i], "value": int(volume.iloc[i]),
+                 "color": "#6366f180"} for i in range(len(dates)) if pd.notna(volume.iloc[i])]
+
+    macd_hist_raw = macd_o.macd_diff()
+    macd_hist = [{"time": dates[i],
+                  "value": round(float(macd_hist_raw.iloc[i]), 6),
+                  "color": "#22c55e" if (pd.notna(macd_hist_raw.iloc[i]) and macd_hist_raw.iloc[i] >= 0) else "#ef4444"}
+                 for i in range(len(dates)) if pd.notna(macd_hist_raw.iloc[i])]
+
+    def ts(series):
+        return [{"time": dates[i], "value": round(float(series.iloc[i]), 4)}
+                for i in range(len(dates)) if pd.notna(series.iloc[i])]
+
+    def ts_pct(series, scale=100):
+        return [{"time": dates[i], "value": round(float(series.iloc[i]) * scale, 2)}
+                for i in range(len(dates)) if pd.notna(series.iloc[i])]
 
     return {
-        "dates": dates,
-        "close": clean(close),
-        "bb_upper": clean(bb.bollinger_hband()),
-        "bb_lower": clean(bb.bollinger_lband()),
-        "bb_mid": clean(bb.bollinger_mavg()),
-        "rsi": clean(rsi_series),
-        "cci": clean(cci_series),
-        "macd": clean(macd_line),
-        "macd_signal": clean(macd_signal_line),
+        "ohlcv":        ohlcv,
+        "volume":       vol_data,
+        "vol_ma20":     ts(vol_ma20),
+        "bb_upper":     ts(bb.bollinger_hband()),
+        "bb_lower":     ts(bb.bollinger_lband()),
+        "bb_mid":       ts(bb.bollinger_mavg()),
+        "ema20":        ts(ema20_s),
+        "ema50":        ts(ema50_s),
+        "ema200":       ts(ema200_s),
+        "rsi":          ts(rsi_s),
+        "cci":          ts(cci_s),
+        "macd":         ts(macd_o.macd()),
+        "macd_signal":  ts(macd_o.macd_signal()),
+        "macd_hist":    macd_hist,
+        "stoch_k":      ts_pct(stoch_o.stochrsi_k()),
+        "stoch_d":      ts_pct(stoch_o.stochrsi_d()),
     }
 
 
 def analyze_all(assets: list, period: str = "6mo") -> list:
-    tickers = [a["ticker"] for a in assets]
+    tickers   = [a["ticker"] for a in assets]
     asset_map = {a["ticker"]: a for a in assets}
-
-    data_map = fetch_all(tickers, period)
+    data_map  = fetch_all(tickers, period)
 
     results = []
     for ticker, df in data_map.items():
         try:
-            ind = compute_indicators(df)
-            score = compute_score(ind)
-            asset = asset_map[ticker]
+            ind      = compute_indicators(df)
+            score    = compute_score(ind)
+            semaforo = compute_semaforo(ind)
+            asset    = asset_map[ticker]
             results.append({
-                "ticker": ticker,
-                "name": asset["name"],
-                "category": asset["category"],
-                "score": score,
-                "signal": signal_label(score),
-                "color": signal_color(score),
+                "ticker":       ticker,
+                "name":         asset["name"],
+                "category":     asset["category"],
+                "score":        score,
+                "signal":       signal_label(score),
+                "signal_color": signal_color(score),
+                "semaforo":     semaforo,
                 **ind,
             })
         except Exception:
