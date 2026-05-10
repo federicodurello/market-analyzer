@@ -93,5 +93,5 @@ def api_refresh():
 
 
 if __name__ == "__main__":
-    print("\n  Market Analyzer → http://127.0.0.1:5000\n")
+    print("\n  Market Analyzer -> http://127.0.0.1:5000\n")
     app.run(debug=False, port=5000, threaded=True)

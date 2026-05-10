@@ -29,7 +29,7 @@ def fetch_all(tickers: list[str], period: str = "6mo") -> dict[str, pd.DataFrame
         if "Close" not in df.columns and "Adj Close" in df.columns:
             df.rename(columns={"Adj Close": "Close"}, inplace=True)
         df.dropna(subset=["Close"], inplace=True)
-        if len(df) >= 30:
+        if len(df) >= 15:
             result[tickers[0]] = df
         return result
 
@@ -43,7 +43,7 @@ def fetch_all(tickers: list[str], period: str = "6mo") -> dict[str, pd.DataFrame
                 "Close":  raw["Close"][ticker],
                 "Volume": raw["Volume"][ticker],
             }).dropna(subset=["Close"])
-            if len(df) >= 30:
+            if len(df) >= 15:
                 result[ticker] = df
         except Exception:
             continue
@@ -97,8 +97,9 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     avg_vol  = float(volume.iloc[-21:-1].mean()) if len(volume) > 21 else float(volume.mean())
     vol_ratio = float(volume.iloc[-1]) / avg_vol if avg_vol > 0 else 1.0
 
-    high_52 = float(close.tail(252).max())
-    low_52  = float(close.tail(252).min())
+    # usa tutto il range scaricato (varia con il periodo selezionato)
+    high_52 = float(close.max())
+    low_52  = float(close.min())
     pct_from_high = ((price - high_52) / high_52) * 100
     pct_from_low  = ((price - low_52)  / low_52)  * 100
 
