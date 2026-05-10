@@ -3,13 +3,13 @@ import pandas as pd
 import ta
 
 
-def fetch_all(tickers: list[str], period: str = "6mo") -> dict[str, pd.DataFrame]:
-    """Single batch download — no group_by to avoid column structure issues."""
+def fetch_all(tickers: list[str], period: str = "2y") -> dict[str, pd.DataFrame]:
+    """Single batch download — weekly bars."""
     try:
         raw = yf.download(
             tickers,
             period=period,
-            interval="1d",
+            interval="1wk",
             progress=False,
             auto_adjust=True,
         )
@@ -33,7 +33,6 @@ def fetch_all(tickers: list[str], period: str = "6mo") -> dict[str, pd.DataFrame
             result[tickers[0]] = df
         return result
 
-    # Multiple tickers: raw has MultiIndex columns (price_type, ticker)
     for ticker in tickers:
         try:
             df = pd.DataFrame({
@@ -51,7 +50,7 @@ def fetch_all(tickers: list[str], period: str = "6mo") -> dict[str, pd.DataFrame
     return result
 
 
-def fetch_data(ticker: str, period: str = "6mo") -> pd.DataFrame:
+def fetch_data(ticker: str, period: str = "2y") -> pd.DataFrame:
     return fetch_all([ticker], period).get(ticker, pd.DataFrame())
 
 
@@ -60,62 +59,70 @@ def _clean(series, scale: float = 1.0) -> list:
 
 
 def compute_indicators(df: pd.DataFrame) -> dict:
+    """Indicatori ottimizzati per trading settimanale (timeframe 1W)."""
     close  = df["Close"]
     high   = df["High"]
     low    = df["Low"]
     volume = df["Volume"]
 
     rsi_s   = ta.momentum.RSIIndicator(close, window=14).rsi()
-    cci_s   = ta.trend.CCIIndicator(high, low, close, window=20).cci()
-    macd_o  = ta.trend.MACD(close)
+    cci_s   = ta.trend.CCIIndicator(high, low, close, window=14).cci()
+    macd_o  = ta.trend.MACD(close, window_slow=26, window_fast=12, window_sign=9)
     bb      = ta.volatility.BollingerBands(close, window=20, window_dev=2)
+    ema10_s = ta.trend.EMAIndicator(close, window=10).ema_indicator()
     ema20_s = ta.trend.EMAIndicator(close, window=20).ema_indicator()
     ema50_s = ta.trend.EMAIndicator(close, window=50).ema_indicator()
-    ema200_s= ta.trend.EMAIndicator(close, window=200).ema_indicator()
     stoch_o = ta.momentum.StochRSIIndicator(close, window=14, smooth1=3, smooth2=3)
     atr_s   = ta.volatility.AverageTrueRange(high, low, close, window=14).average_true_range()
+
+    # VWAP rolling 10 settimane
+    tp     = (high + low + close) / 3
+    vwap_s = (tp * volume).rolling(10).sum() / volume.rolling(10).sum()
 
     def last(s):
         v = s.iloc[-1]
         return float(v) if pd.notna(v) else None
 
-    price      = last(close)
-    rsi        = last(rsi_s)
-    cci        = last(cci_s)
-    macd       = last(macd_o.macd())
-    macd_sig   = last(macd_o.macd_signal())
-    bb_lower   = last(bb.bollinger_lband())
-    bb_upper   = last(bb.bollinger_hband())
-    bb_mid     = last(bb.bollinger_mavg())
-    ema20      = last(ema20_s)
-    ema50      = last(ema50_s)
-    ema200     = last(ema200_s)
-    stoch_k    = last(stoch_o.stochrsi_k())
-    stoch_d    = last(stoch_o.stochrsi_d())
-    atr        = last(atr_s)
+    def prev(s):
+        v = s.iloc[-2] if len(s) >= 2 else s.iloc[-1]
+        return float(v) if pd.notna(v) else None
 
-    avg_vol  = float(volume.iloc[-21:-1].mean()) if len(volume) > 21 else float(volume.mean())
-    vol_ratio = float(volume.iloc[-1]) / avg_vol if avg_vol > 0 else 1.0
+    price     = last(close)
+    rsi       = last(rsi_s)
+    cci       = last(cci_s)
+    macd      = last(macd_o.macd())
+    macd_sig  = last(macd_o.macd_signal())
+    bb_lower  = last(bb.bollinger_lband())
+    bb_upper  = last(bb.bollinger_hband())
+    bb_mid    = last(bb.bollinger_mavg())
+    ema10     = last(ema10_s)
+    ema20     = last(ema20_s)
+    ema50     = last(ema50_s)
+    stoch_k   = last(stoch_o.stochrsi_k())
+    stoch_d   = last(stoch_o.stochrsi_d())
+    atr       = last(atr_s)
+    vwap      = last(vwap_s)
 
-    # usa tutto il range scaricato (varia con il periodo selezionato)
-    high_52 = float(close.max())
-    low_52  = float(close.min())
-    pct_from_high = ((price - high_52) / high_52) * 100
-    pct_from_low  = ((price - low_52)  / low_52)  * 100
+    # volume vs media 10 settimane
+    avg_vol10 = float(volume.iloc[-11:-1].mean()) if len(volume) > 10 else float(volume.mean())
+    vol_ratio = float(volume.iloc[-1]) / avg_vol10 if avg_vol10 > 0 else 1.0
+
+    high_p        = float(close.max())
+    low_p         = float(close.min())
+    pct_from_high = ((price - high_p) / high_p) * 100
+    pct_from_low  = ((price - low_p)  / low_p)  * 100
 
     bb_range = (bb_upper or 0) - (bb_lower or 0)
     bb_pos   = ((price - bb_lower) / bb_range * 100) if bb_range > 0 else 50
 
-    macd_bullish  = (macd or 0) > (macd_sig or 0)
-    ema_bullish   = (ema20 or 0) > (ema50 or 0)
-    golden_cross  = ema200 is not None and (ema20 or 0) > (ema50 or 0) > ema200
-    stoch_k_pct   = (stoch_k or 0.5) * 100
-    stoch_d_pct   = (stoch_d or 0.5) * 100
+    stoch_k_pct = (stoch_k or 0.5) * 100
+    stoch_d_pct = (stoch_d or 0.5) * 100
 
-    # --- valori penultima barra per rilevare "in risalita" ---
-    def prev(s):
-        v = s.iloc[-2] if len(s) >= 2 else s.iloc[-1]
-        return float(v) if pd.notna(v) else None
+    macd_bullish      = (macd or 0) > (macd_sig or 0)
+    ema_bullish       = (ema10 or 0) > (ema20 or 0)
+    golden_cross      = (ema10 or 0) > (ema20 or 0) > (ema50 or 1e9)
+    price_above_ema50 = (ema50 is not None) and price > ema50
+    price_above_vwap  = (vwap is not None) and price > vwap
 
     cci_prev      = prev(cci_s)
     stoch_k_prev  = (prev(stoch_o.stochrsi_k()) or 0.5) * 100
@@ -123,58 +130,57 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     macd_hist_now = float(macd_hist_s.iloc[-1]) if pd.notna(macd_hist_s.iloc[-1]) else 0
     macd_hist_prv = float(macd_hist_s.iloc[-2]) if len(macd_hist_s) >= 2 and pd.notna(macd_hist_s.iloc[-2]) else 0
 
-    cci_rising          = (cci or 0) > (cci_prev or 0)
-    stoch_rising        = stoch_k_pct > stoch_k_prev
-    macd_div_positive   = macd_hist_now > macd_hist_prv   # istogramma in crescita
-    price_above_ema200  = ema200 is not None and price > ema200
+    cci_rising        = (cci or 0) > (cci_prev or 0)
+    stoch_rising      = stoch_k_pct > stoch_k_prev
+    macd_div_positive = macd_hist_now > macd_hist_prv
 
     return {
-        "price":              round(price, 4),
-        "rsi":                round(rsi or 50, 2),
-        "cci":                round(cci or 0, 2),
-        "cci_rising":         cci_rising,
-        "macd":               round(macd or 0, 6),
-        "macd_signal":        round(macd_sig or 0, 6),
-        "macd_bullish":       macd_bullish,
-        "macd_div_positive":  macd_div_positive,
-        "bb_lower":           round(bb_lower or 0, 4),
-        "bb_upper":           round(bb_upper or 0, 4),
-        "bb_mid":             round(bb_mid or 0, 4),
-        "bb_position":        round(bb_pos, 1),
-        "ema20":              round(ema20 or 0, 4),
-        "ema50":              round(ema50 or 0, 4),
-        "ema200":             round(ema200, 4) if ema200 else None,
-        "golden_cross":       golden_cross,
-        "ema_bullish":        ema_bullish,
-        "price_above_ema200": price_above_ema200,
-        "stoch_k":            round(stoch_k_pct, 2),
-        "stoch_d":            round(stoch_d_pct, 2),
-        "stoch_rising":       stoch_rising,
-        "atr":                round(atr or 0, 4),
-        "atr_pct":            round(((atr or 0) / price) * 100, 2),
-        "vol_ratio":          round(vol_ratio, 2),
-        "high_52w":           round(high_52, 4),
-        "low_52w":            round(low_52, 4),
-        "pct_from_high":      round(pct_from_high, 2),
-        "pct_from_low":       round(pct_from_low, 2),
+        "price":               round(price, 4),
+        "rsi":                 round(rsi or 50, 2),
+        "cci":                 round(cci or 0, 2),
+        "cci_rising":          cci_rising,
+        "macd":                round(macd or 0, 6),
+        "macd_signal":         round(macd_sig or 0, 6),
+        "macd_bullish":        macd_bullish,
+        "macd_div_positive":   macd_div_positive,
+        "bb_lower":            round(bb_lower or 0, 4),
+        "bb_upper":            round(bb_upper or 0, 4),
+        "bb_mid":              round(bb_mid or 0, 4),
+        "bb_position":         round(bb_pos, 1),
+        "ema10":               round(ema10 or 0, 4),
+        "ema20":               round(ema20 or 0, 4),
+        "ema50":               round(ema50 or 0, 4),
+        "golden_cross":        golden_cross,
+        "ema_bullish":         ema_bullish,
+        "price_above_ema50":   price_above_ema50,
+        "price_above_vwap":    price_above_vwap,
+        "vwap":                round(vwap, 4) if vwap else None,
+        "stoch_k":             round(stoch_k_pct, 2),
+        "stoch_d":             round(stoch_d_pct, 2),
+        "stoch_rising":        stoch_rising,
+        "atr":                 round(atr or 0, 4),
+        "atr_pct":             round(((atr or 0) / price) * 100, 2),
+        "vol_ratio":           round(vol_ratio, 2),
+        "high_period":         round(high_p, 4),
+        "low_period":          round(low_p, 4),
+        "pct_from_high":       round(pct_from_high, 2),
+        "pct_from_low":        round(pct_from_low, 2),
     }
 
 
 def compute_semaforo(ind: dict) -> dict:
-    """
-    7 condizioni di acquisto. Verde=4+, Giallo=2-3, Rosso=0-1.
-    """
+    """7 condizioni di acquisto settimanale. Verde=5+, Giallo=2-4, Rosso=0-1."""
     conds = {
-        "RSI<40":     ind["rsi"] < 40,
-        "CCI<-100":   ind["cci"] < -100,
-        "MACD":       ind["macd_bullish"],
-        "BB<30%":     ind["bb_position"] < 30,
-        "EMA bull":   ind["ema_bullish"],
-        "StochK<20":  ind["stoch_k"] < 20,
-        "Vol×1.5":    ind["vol_ratio"] > 1.5,
+        "RSI<40":    ind["rsi"] < 40,
+        "CCI<-100":  ind["cci"] < -100,
+        "MACD":      ind["macd_bullish"],
+        "BB<30%":    ind["bb_position"] < 30,
+        "EMA bull":  ind["ema_bullish"],
+        "StochK<20": ind["stoch_k"] < 20,
+        "Vol*1.5":   ind["vol_ratio"] > 1.5,
     }
     count = sum(conds.values())
-    if count >= 4:
+    if count >= 5:
         return {"level": "green",  "color": "#22c55e", "label": "COMPRA",  "count": count, "details": conds}
     elif count >= 2:
         return {"level": "yellow", "color": "#fbbf24", "label": "NEUTRO",  "count": count, "details": conds}
@@ -191,7 +197,7 @@ def compute_rischio_basso(ind: dict) -> dict:
         "RSI 30-45":          30 <= ind["rsi"] <= 45,
         "CCI<-100 risalita":  ind["cci"] < -100 and ind["cci_rising"],
         "StochK<20 risalita": ind["stoch_k"] < 20 and ind["stoch_rising"],
-        "Prezzo > EMA200":    ind["price_above_ema200"],
+        "Prezzo > EMA50":     ind["price_above_ema50"],
         "Volume > media":     ind["vol_ratio"] > 1.0,
         "MACD div. positiva": ind["macd_div_positive"],
         "BB banda inferiore": ind["bb_position"] < 10,
@@ -220,7 +226,7 @@ def compute_score(ind: dict) -> int:
     elif bb < 40: score += 6
     if ind["macd_bullish"]: score += 15
     pl = ind["pct_from_low"]
-    if pl < 5:   score += 15
+    if pl < 5:    score += 15
     elif pl < 15: score += 8
     elif pl < 25: score += 3
     return min(score, 100)
@@ -240,7 +246,7 @@ def signal_color(score: int) -> str:
     return "#f87171"
 
 
-def get_chart_data(ticker: str, period: str = "6mo") -> dict:
+def get_chart_data(ticker: str, period: str = "2y") -> dict:
     df = fetch_data(ticker, period)
     if df.empty:
         return {}
@@ -252,14 +258,14 @@ def get_chart_data(ticker: str, period: str = "6mo") -> dict:
     volume = df["Volume"]
 
     rsi_s    = ta.momentum.RSIIndicator(close, window=14).rsi()
-    cci_s    = ta.trend.CCIIndicator(high, low, close, window=20).cci()
+    cci_s    = ta.trend.CCIIndicator(high, low, close, window=14).cci()
     macd_o   = ta.trend.MACD(close)
     bb       = ta.volatility.BollingerBands(close, window=20, window_dev=2)
+    ema10_s  = ta.trend.EMAIndicator(close, window=10).ema_indicator()
     ema20_s  = ta.trend.EMAIndicator(close, window=20).ema_indicator()
     ema50_s  = ta.trend.EMAIndicator(close, window=50).ema_indicator()
-    ema200_s = ta.trend.EMAIndicator(close, window=200).ema_indicator()
     stoch_o  = ta.momentum.StochRSIIndicator(close, window=14, smooth1=3, smooth2=3)
-    vol_ma20 = volume.rolling(20).mean()
+    vol_ma10 = volume.rolling(10).mean()
 
     dates = [d.strftime("%Y-%m-%d") for d in df.index]
 
@@ -291,26 +297,26 @@ def get_chart_data(ticker: str, period: str = "6mo") -> dict:
                 for i in range(len(dates)) if pd.notna(series.iloc[i])]
 
     return {
-        "ohlcv":        ohlcv,
-        "volume":       vol_data,
-        "vol_ma20":     ts(vol_ma20),
-        "bb_upper":     ts(bb.bollinger_hband()),
-        "bb_lower":     ts(bb.bollinger_lband()),
-        "bb_mid":       ts(bb.bollinger_mavg()),
-        "ema20":        ts(ema20_s),
-        "ema50":        ts(ema50_s),
-        "ema200":       ts(ema200_s),
-        "rsi":          ts(rsi_s),
-        "cci":          ts(cci_s),
-        "macd":         ts(macd_o.macd()),
-        "macd_signal":  ts(macd_o.macd_signal()),
-        "macd_hist":    macd_hist,
-        "stoch_k":      ts_pct(stoch_o.stochrsi_k()),
-        "stoch_d":      ts_pct(stoch_o.stochrsi_d()),
+        "ohlcv":       ohlcv,
+        "volume":      vol_data,
+        "vol_ma10":    ts(vol_ma10),
+        "bb_upper":    ts(bb.bollinger_hband()),
+        "bb_lower":    ts(bb.bollinger_lband()),
+        "bb_mid":      ts(bb.bollinger_mavg()),
+        "ema10":       ts(ema10_s),
+        "ema20":       ts(ema20_s),
+        "ema50":       ts(ema50_s),
+        "rsi":         ts(rsi_s),
+        "cci":         ts(cci_s),
+        "macd":        ts(macd_o.macd()),
+        "macd_signal": ts(macd_o.macd_signal()),
+        "macd_hist":   macd_hist,
+        "stoch_k":     ts_pct(stoch_o.stochrsi_k()),
+        "stoch_d":     ts_pct(stoch_o.stochrsi_d()),
     }
 
 
-def analyze_all(assets: list, period: str = "6mo") -> list:
+def analyze_all(assets: list, period: str = "2y") -> list:
     tickers   = [a["ticker"] for a in assets]
     asset_map = {a["ticker"]: a for a in assets}
     data_map  = fetch_all(tickers, period)

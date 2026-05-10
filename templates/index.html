@@ -186,9 +186,9 @@ canvas { max-height:160px; }
     <select id="periodSelect">
       <option value="1mo">1 mese</option>
       <option value="3mo">3 mesi</option>
-      <option value="6mo" selected>6 mesi</option>
+      <option value="6mo">6 mesi</option>
       <option value="1y">1 anno</option>
-      <option value="2y">2 anni</option>
+      <option value="2y" selected>2 anni</option>
     </select>
     <button class="primary" id="refreshBtn">Aggiorna</button>
   </div>
@@ -197,6 +197,7 @@ canvas { max-height:160px; }
 <div class="status-row">
   <span><span class="dot-live"></span> <span id="statusText">Avvio analisi...</span></span>
   <span id="lastUpdate"></span>
+  <span id="nextUpdateEl" style="color:var(--accent)"></span>
   <span id="countdown" style="margin-left:auto"></span>
 </div>
 
@@ -243,6 +244,7 @@ const catFilter       = document.getElementById("catFilter");
 const refreshBtn      = document.getElementById("refreshBtn");
 const statusText      = document.getElementById("statusText");
 const lastUpdateEl    = document.getElementById("lastUpdate");
+const nextUpdateEl    = document.getElementById("nextUpdateEl");
 const countdownEl     = document.getElementById("countdown");
 const tableContainer  = document.getElementById("tableContainer");
 
@@ -268,10 +270,11 @@ window.addEventListener("DOMContentLoaded", pollReady);
 
 function pollReady() {
   fetch("/api/status").then(r=>r.json()).then(s=>{
+    if(s.next_update) nextRefreshAt = new Date(s.next_update);
     if(s.ready){
       loadData(false);
     } else {
-      statusText.textContent = "Analisi in corso…";
+      statusText.textContent = "Analisi in corso...";
       setTimeout(pollReady, 3000);
     }
   }).catch(()=>setTimeout(pollReady, 5000));
@@ -282,20 +285,29 @@ async function loadData(silent=false) {
   const period = periodSelect.value;
   refreshBtn.disabled = true;
   if(!silent){
-    statusText.textContent = "Aggiornamento…";
-    tableContainer.innerHTML = `<div class="loading"><div class="spinner"></div><div>Analisi in corso…</div></div>`;
+    statusText.textContent = "Aggiornamento...";
+    tableContainer.innerHTML = `<div class="loading"><div class="spinner"></div><div>Analisi in corso...</div></div>`;
   }
   try {
-    const res  = await fetch(`/api/analyze?period=${period}`);
-    const data = await res.json();
+    const [res, sRes] = await Promise.all([
+      fetch(`/api/analyze?period=${period}`),
+      fetch("/api/status"),
+    ]);
+    const data   = await res.json();
+    const status = await sRes.json();
+
+    if(status.next_update) nextRefreshAt = new Date(status.next_update);
+    else nextRefreshAt = calcNextMonday9am();
+
     checkGreenTransitions(data);
     allData = data;
     prevSemafori = {};
     allData.forEach(d=>{ prevSemafori[d.ticker]=d.semaforo.level; });
 
-    const ts = new Date().toLocaleTimeString("it-IT");
-    statusText.textContent = `${data.length} asset analizzati`;
-    lastUpdateEl.textContent = `Aggiornato: ${ts}`;
+    const now = new Date();
+    statusText.textContent   = `${data.length} asset analizzati — timeframe settimanale`;
+    lastUpdateEl.textContent = `Aggiornato: ${now.toLocaleDateString("it-IT")} ${now.toLocaleTimeString("it-IT")}`;
+    nextUpdateEl.textContent = `Prossimo: ${nextRefreshAt.toLocaleDateString("it-IT")} 09:00`;
     renderTable();
     scheduleNextRefresh();
   } catch(e) {
@@ -305,26 +317,47 @@ async function loadData(silent=false) {
   }
 }
 
-// ── AUTO-REFRESH ────────────────────────────────────────────────────────────
-function isMarketOpen() {
-  const now  = new Date();
-  const day  = now.getUTCDay();
-  if(day===0||day===6) return false;
-  const min  = now.getUTCHours()*60+now.getUTCMinutes();
-  return min>=7*60 && min<=20*60; // covers Xetra+NYSE
+// ── AUTO-REFRESH (ogni lunedi 09:00 locale) ──────────────────────────────────
+function calcNextMonday9am() {
+  const now = new Date();
+  const day = now.getDay(); // 0=Dom, 1=Lun
+  let daysAhead;
+  if(day === 1){
+    const nine = new Date(now); nine.setHours(9,0,0,0);
+    daysAhead = now < nine ? 0 : 7;
+  } else {
+    daysAhead = (1 - day + 7) % 7;
+  }
+  const next = new Date(now);
+  next.setDate(next.getDate() + daysAhead);
+  next.setHours(9,0,0,0);
+  return next;
 }
 
 function scheduleNextRefresh() {
-  if(refreshTmr) clearTimeout(refreshTmr);
+  if(refreshTmr)  clearInterval(refreshTmr);
   if(countdownTmr) clearInterval(countdownTmr);
-  nextRefreshAt = Date.now()+5*60*1000;
-  refreshTmr = setTimeout(()=>{ if(isMarketOpen()) loadData(true); scheduleNextRefresh(); }, 5*60*1000);
+
+  if(!nextRefreshAt) nextRefreshAt = calcNextMonday9am();
+
+  // Check every minute if it's time for the weekly refresh
+  refreshTmr = setInterval(()=>{
+    if(Date.now() >= nextRefreshAt.getTime()){
+      clearInterval(refreshTmr); refreshTmr = null;
+      nextRefreshAt = calcNextMonday9am();
+      loadData(true);
+    }
+  }, 60000);
+
   countdownTmr = setInterval(()=>{
-    const rem = Math.max(0,Math.round((nextRefreshAt-Date.now())/1000));
-    const m = Math.floor(rem/60), s = rem%60;
-    countdownEl.textContent = isMarketOpen()
-      ? `↻ ${m}:${s.toString().padStart(2,"0")}`
-      : "Mercato chiuso";
+    const rem = Math.max(0, Math.round((nextRefreshAt.getTime()-Date.now())/1000));
+    const d = Math.floor(rem/86400);
+    const h = Math.floor((rem%86400)/3600);
+    const m = Math.floor((rem%3600)/60);
+    const s = rem%60;
+    if(d>0)      countdownEl.textContent = `Aggiorn. tra: ${d}g ${h}h`;
+    else if(h>0) countdownEl.textContent = `Aggiorn. tra: ${h}h ${m}m`;
+    else         countdownEl.textContent = `Aggiorn. tra: ${m}:${s.toString().padStart(2,"0")}`;
   }, 1000);
 }
 
@@ -504,13 +537,13 @@ async function openModal(ticker,name,rowData){
     <!-- INDICATOR CARDS -->
     <div class="ind-grid">
       ${indCard("RSI (14)", rowData.rsi, rsiColor(rowData.rsi), rowData.rsi<30?"Ipervenduto ✓":rowData.rsi>70?"Ipercomprato ✗":"Neutrale")}
-      ${indCard("CCI (20)", rowData.cci, cciColor(rowData.cci), rowData.cci<-200?"Ipervenduto ✓":rowData.cci<-100?"Zona grigia":rowData.cci>100?"Ipercomprato ✗":"Neutrale")}
+      ${indCard("CCI (14)", rowData.cci, cciColor(rowData.cci), rowData.cci<-200?"Ipervenduto ✓":rowData.cci<-100?"Zona grigia":rowData.cci>100?"Ipercomprato ✗":"Neutrale")}
       ${indCard("StochRSI K", rowData.stoch_k, stochColor(rowData.stoch_k), rowData.stoch_k<20?"Ipervenduto ✓":rowData.stoch_k>80?"Ipercomprato ✗":"Neutrale")}
       ${indCard("BB%", rowData.bb_position+"%", bbColor(rowData.bb_position), rowData.bb_position<20?"Vicino al fondo ✓":rowData.bb_position>80?"Vicino al tetto ✗":"Zona centrale")}
       ${indCard("MACD", rowData.macd_bullish?"Bullish ↑":"Bearish ↓", rowData.macd_bullish?"var(--green)":"var(--red)", `Signal: ${rowData.macd_signal}`)}
-      ${indCard("EMA trend", rowData.golden_cross?"Golden Cross ☀":rowData.ema_bullish?"Bullish ↑":"Bearish ↓", rowData.golden_cross?"var(--yellow)":rowData.ema_bullish?"var(--green)":"var(--red)", `20:${rowData.ema20} / 50:${rowData.ema50}`)}
+      ${indCard("EMA trend", rowData.golden_cross?"Golden Cross ☀":rowData.ema_bullish?"Bullish ↑":"Bearish ↓", rowData.golden_cross?"var(--yellow)":rowData.ema_bullish?"var(--green)":"var(--red)", `10:${rowData.ema10} / 20:${rowData.ema20} / 50:${rowData.ema50}`)}
       ${indCard("ATR%", rowData.atr_pct+"%", rowData.atr_pct>3?"var(--yellow)":"var(--muted)", "Volatilità")}
-      ${indCard("Volume", rowData.vol_ratio+"×", rowData.vol_ratio>1.5?"var(--yellow)":"var(--muted)", "vs media 20gg")}
+      ${indCard("Volume", rowData.vol_ratio+"×", rowData.vol_ratio>1.5?"var(--yellow)":"var(--muted)", "vs media 10 sett.")}
       ${indCard("Score", rowData.score+"/100", rowData.signal_color, rowData.signal)}
     </div>
 
@@ -566,14 +599,12 @@ function buildLWChart(d) {
   bbL.setData(d.bb_lower);
   const bbM = lwChart.addLineSeries({color:"#fbbf2466",lineWidth:1,lineStyle:3});
   bbM.setData(d.bb_mid);
-  const e20 = lwChart.addLineSeries({color:"#6366f1",lineWidth:1.5});
+  const e10 = lwChart.addLineSeries({color:"#6366f1",lineWidth:1.5});
+  e10.setData(d.ema10);
+  const e20 = lwChart.addLineSeries({color:"#f97316",lineWidth:1.5});
   e20.setData(d.ema20);
-  const e50 = lwChart.addLineSeries({color:"#f97316",lineWidth:1.5});
+  const e50 = lwChart.addLineSeries({color:"#ef4444",lineWidth:1.5});
   e50.setData(d.ema50);
-  if(d.ema200 && d.ema200.length>0){
-    const e200=lwChart.addLineSeries({color:"#ef4444",lineWidth:1.5});
-    e200.setData(d.ema200);
-  }
 
   lwChart.timeScale().fitContent();
   window.addEventListener("resize", ()=>{
@@ -627,7 +658,7 @@ function buildCJCharts(d) {
     data:{labels:d.volume.map(p=>p.time),datasets:[
       {type:"bar",  label:"Volume", data:d.volume.map(p=>p.value),
        backgroundColor:"#6366f166",borderWidth:0},
-      {type:"line", label:"MA20",   data:d.vol_ma20.map(p=>({x:p.time,y:p.value})),
+      {type:"line", label:"MA10",   data:d.vol_ma10.map(p=>({x:p.time,y:p.value})),
        borderColor:"#fbbf24",borderWidth:1.5,pointRadius:0,tension:.1},
     ]},
     options:{...baseOpts,scales:{...baseOpts.scales,y:{...baseOpts.scales.y,
