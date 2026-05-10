@@ -219,7 +219,7 @@ def compute_short(ind: dict) -> dict:
     """
     criteria = {
         "RSI>65 discesa":     ind["rsi"] > 65 and ind["rsi_falling"],
-        "CCI>+100 discesa":   ind["cci"] > 100 and not ind["cci_rising"],
+        "CCI>+200 discesa":   ind["cci"] > 200 and not ind["cci_rising"],
         "StochK>80 discesa":  ind["stoch_k"] > 80 and not ind["stoch_rising"],
         "Prezzo < EMA50":     not ind["price_above_ema50"],
         "Volume > media":     ind["vol_ratio"] > 1.0,

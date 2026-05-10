@@ -143,7 +143,7 @@ def backtest_short_asset(df: pd.DataFrame) -> dict:
 
     # SHORT — mirror of compute_short, signal at >=5
     c1 = (rsi_s > 65)  & (rsi_s   < rsi_s.shift(1))       # RSI>65 falling
-    c2 = (cci_s > 100) & (cci_s   < cci_s.shift(1))       # CCI>+100 falling
+    c2 = (cci_s > 200) & (cci_s   < cci_s.shift(1))       # CCI>+200 falling
     c3 = (stoch_k > 80) & (stoch_k < stoch_k.shift(1))    # StochK>80 falling
     c4 = close < ema50_s                                    # price < EMA50
     c5 = vol_ratio > 1.0                                    # volume > average
