@@ -93,6 +93,35 @@ tr:hover td { background: rgba(255,255,255,.03); cursor: pointer; }
   font-size:10px; font-weight:700;
 }
 
+/* RISCHIO BASSO BUTTON + TOOLTIP */
+.rb-wrap { position:relative; display:inline-block; }
+.rb-btn {
+  display:inline-block; padding:5px 11px; border-radius:20px;
+  font-size:11px; font-weight:700; letter-spacing:.3px; cursor:default;
+  border:none; white-space:nowrap;
+}
+.rb-btn.basso  { background:#1d4ed822; color:#60a5fa; border:1px solid #3b82f6; }
+.rb-btn.alta   { background:#1d4ed8;   color:#fff;    border:1px solid #3b82f1;
+                 box-shadow:0 0 12px #3b82f688; animation:pulse-blue 2s ease infinite; }
+@keyframes pulse-blue { 0%,100%{box-shadow:0 0 10px #3b82f655} 50%{box-shadow:0 0 22px #3b82f6bb} }
+
+.rb-tooltip {
+  display:none; position:absolute; bottom:calc(100% + 8px); left:50%;
+  transform:translateX(-50%); background:#1a1d27; border:1px solid #3b82f6;
+  border-radius:10px; padding:12px 14px; width:230px; z-index:200;
+  font-size:11px; color:var(--text); pointer-events:none;
+  box-shadow:0 8px 24px #0008;
+}
+.rb-tooltip::after {
+  content:""; position:absolute; top:100%; left:50%; transform:translateX(-50%);
+  border:6px solid transparent; border-top-color:#3b82f6;
+}
+.rb-wrap:hover .rb-tooltip { display:block; }
+.rb-tooltip .rb-row { display:flex; align-items:center; gap:7px; margin:4px 0; }
+.rb-tooltip .rb-row .dot { width:8px;height:8px;border-radius:50%;flex-shrink:0; }
+.rb-counter { font-weight:700; font-size:12px; margin-bottom:8px;
+              padding-bottom:7px; border-bottom:1px solid var(--border); }
+
 /* LOADING */
 .loading { text-align:center; padding:60px; color:var(--muted); }
 .spinner {
@@ -328,6 +357,7 @@ function renderTable() {
 
   const cols = [
     {key:"semaforo_count", label:"Segnale"},
+    {key:"rb_count",       label:"Confidenza"},
     {key:"name",           label:"Asset"},
     {key:"score",          label:"Score"},
     {key:"price",          label:"Prezzo"},
@@ -361,6 +391,21 @@ function renderTable() {
         ? `<span class="ema-badge" style="color:#86efac">↑ Bull</span>`
         : `<span class="ema-badge" style="color:var(--muted)">↓ Bear</span>`;
 
+    const rb    = row.rischio_basso;
+    const rbCell = rb.show
+      ? `<div class="rb-wrap">
+           <span class="rb-btn ${rb.level}">${rb.label}</span>
+           <div class="rb-tooltip">
+             <div class="rb-counter">${rb.count}/7 criteri soddisfatti</div>
+             ${Object.entries(rb.criteria).map(([k,v])=>`
+               <div class="rb-row">
+                 <span class="dot" style="background:${v?'var(--green)':'var(--red)'}"></span>
+                 <span style="color:${v?'var(--text)':'var(--muted)'}">${k}</span>
+               </div>`).join("")}
+           </div>
+         </div>`
+      : `<span style="color:var(--border);font-size:10px">${rb.count}/7</span>`;
+
     html+=`<tr data-ticker="${row.ticker}" data-name="${row.name}">
       <td class="semaforo-cell">
         <div class="semaforo-circle" style="background:${bg};color:${sc};--sc:${sc}44">
@@ -369,6 +414,7 @@ function renderTable() {
         <div class="semaforo-label" style="color:${sc}">${sf.label}</div>
         <div class="semaforo-sub">/7</div>
       </td>
+      <td style="text-align:center">${rbCell}</td>
       <td>
         <span style="font-weight:600">${row.name}</span><br>
         <span style="color:var(--muted);font-size:10px">${row.ticker} · <span class="cat-chip">${row.category}</span></span>

@@ -112,31 +112,51 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     stoch_k_pct   = (stoch_k or 0.5) * 100
     stoch_d_pct   = (stoch_d or 0.5) * 100
 
+    # --- valori penultima barra per rilevare "in risalita" ---
+    def prev(s):
+        v = s.iloc[-2] if len(s) >= 2 else s.iloc[-1]
+        return float(v) if pd.notna(v) else None
+
+    cci_prev      = prev(cci_s)
+    stoch_k_prev  = (prev(stoch_o.stochrsi_k()) or 0.5) * 100
+    macd_hist_s   = macd_o.macd_diff()
+    macd_hist_now = float(macd_hist_s.iloc[-1]) if pd.notna(macd_hist_s.iloc[-1]) else 0
+    macd_hist_prv = float(macd_hist_s.iloc[-2]) if len(macd_hist_s) >= 2 and pd.notna(macd_hist_s.iloc[-2]) else 0
+
+    cci_rising          = (cci or 0) > (cci_prev or 0)
+    stoch_rising        = stoch_k_pct > stoch_k_prev
+    macd_div_positive   = macd_hist_now > macd_hist_prv   # istogramma in crescita
+    price_above_ema200  = ema200 is not None and price > ema200
+
     return {
-        "price":          round(price, 4),
-        "rsi":            round(rsi or 50, 2),
-        "cci":            round(cci or 0, 2),
-        "macd":           round(macd or 0, 6),
-        "macd_signal":    round(macd_sig or 0, 6),
-        "macd_bullish":   macd_bullish,
-        "bb_lower":       round(bb_lower or 0, 4),
-        "bb_upper":       round(bb_upper or 0, 4),
-        "bb_mid":         round(bb_mid or 0, 4),
-        "bb_position":    round(bb_pos, 1),
-        "ema20":          round(ema20 or 0, 4),
-        "ema50":          round(ema50 or 0, 4),
-        "ema200":         round(ema200, 4) if ema200 else None,
-        "golden_cross":   golden_cross,
-        "ema_bullish":    ema_bullish,
-        "stoch_k":        round(stoch_k_pct, 2),
-        "stoch_d":        round(stoch_d_pct, 2),
-        "atr":            round(atr or 0, 4),
-        "atr_pct":        round(((atr or 0) / price) * 100, 2),
-        "vol_ratio":      round(vol_ratio, 2),
-        "high_52w":       round(high_52, 4),
-        "low_52w":        round(low_52, 4),
-        "pct_from_high":  round(pct_from_high, 2),
-        "pct_from_low":   round(pct_from_low, 2),
+        "price":              round(price, 4),
+        "rsi":                round(rsi or 50, 2),
+        "cci":                round(cci or 0, 2),
+        "cci_rising":         cci_rising,
+        "macd":               round(macd or 0, 6),
+        "macd_signal":        round(macd_sig or 0, 6),
+        "macd_bullish":       macd_bullish,
+        "macd_div_positive":  macd_div_positive,
+        "bb_lower":           round(bb_lower or 0, 4),
+        "bb_upper":           round(bb_upper or 0, 4),
+        "bb_mid":             round(bb_mid or 0, 4),
+        "bb_position":        round(bb_pos, 1),
+        "ema20":              round(ema20 or 0, 4),
+        "ema50":              round(ema50 or 0, 4),
+        "ema200":             round(ema200, 4) if ema200 else None,
+        "golden_cross":       golden_cross,
+        "ema_bullish":        ema_bullish,
+        "price_above_ema200": price_above_ema200,
+        "stoch_k":            round(stoch_k_pct, 2),
+        "stoch_d":            round(stoch_d_pct, 2),
+        "stoch_rising":       stoch_rising,
+        "atr":                round(atr or 0, 4),
+        "atr_pct":            round(((atr or 0) / price) * 100, 2),
+        "vol_ratio":          round(vol_ratio, 2),
+        "high_52w":           round(high_52, 4),
+        "low_52w":            round(low_52, 4),
+        "pct_from_high":      round(pct_from_high, 2),
+        "pct_from_low":       round(pct_from_low, 2),
     }
 
 
@@ -160,6 +180,29 @@ def compute_semaforo(ind: dict) -> dict:
         return {"level": "yellow", "color": "#fbbf24", "label": "NEUTRO",  "count": count, "details": conds}
     else:
         return {"level": "red",    "color": "#ef4444", "label": "ATTENDI", "count": count, "details": conds}
+
+
+def compute_rischio_basso(ind: dict) -> dict:
+    """
+    7 criteri specifici per segnale di entrata a basso rischio.
+    7/7 -> Alta Confidenza, 6/7 -> Rischio Basso, <=5 -> nessun pulsante.
+    """
+    criteria = {
+        "RSI 30-45":          30 <= ind["rsi"] <= 45,
+        "CCI<-100 risalita":  ind["cci"] < -100 and ind["cci_rising"],
+        "StochK<20 risalita": ind["stoch_k"] < 20 and ind["stoch_rising"],
+        "Prezzo > EMA200":    ind["price_above_ema200"],
+        "Volume > media":     ind["vol_ratio"] > 1.0,
+        "MACD div. positiva": ind["macd_div_positive"],
+        "BB banda inferiore": ind["bb_position"] < 10,
+    }
+    count = sum(criteria.values())
+    if count == 7:
+        return {"show": True,  "level": "alta",  "label": "Alta Confidenza", "count": count, "criteria": criteria}
+    elif count == 6:
+        return {"show": True,  "level": "basso", "label": "Rischio Basso",   "count": count, "criteria": criteria}
+    else:
+        return {"show": False, "level": "none",  "label": "",                "count": count, "criteria": criteria}
 
 
 def compute_score(ind: dict) -> int:
@@ -275,18 +318,20 @@ def analyze_all(assets: list, period: str = "6mo") -> list:
     results = []
     for ticker, df in data_map.items():
         try:
-            ind      = compute_indicators(df)
-            score    = compute_score(ind)
-            semaforo = compute_semaforo(ind)
-            asset    = asset_map[ticker]
+            ind           = compute_indicators(df)
+            score         = compute_score(ind)
+            semaforo      = compute_semaforo(ind)
+            rischio_basso = compute_rischio_basso(ind)
+            asset         = asset_map[ticker]
             results.append({
-                "ticker":       ticker,
-                "name":         asset["name"],
-                "category":     asset["category"],
-                "score":        score,
-                "signal":       signal_label(score),
-                "signal_color": signal_color(score),
-                "semaforo":     semaforo,
+                "ticker":        ticker,
+                "name":          asset["name"],
+                "category":      asset["category"],
+                "score":         score,
+                "signal":        signal_label(score),
+                "signal_color":  signal_color(score),
+                "semaforo":      semaforo,
+                "rischio_basso": rischio_basso,
                 **ind,
             })
         except Exception:
