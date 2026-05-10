@@ -187,6 +187,31 @@ canvas { max-height:160px; }
                  letter-spacing:.5px; margin-bottom:12px; }
 .affid-chip { display:inline-block; padding:2px 8px; border-radius:20px;
               font-size:10px; font-weight:700; }
+
+/* SHORT button */
+.short-wrap { position:relative; display:inline-block; }
+.short-btn {
+  display:inline-block; padding:5px 11px; border-radius:20px;
+  font-size:11px; font-weight:700; letter-spacing:.3px; cursor:default;
+  background:#450a0a; color:#fca5a5; border:1px solid #ef4444;
+  box-shadow:0 0 12px #ef444488; animation:pulse-red 2s ease infinite;
+  white-space:nowrap;
+}
+@keyframes pulse-red { 0%,100%{box-shadow:0 0 10px #ef444455} 50%{box-shadow:0 0 24px #ef4444cc} }
+.short-tooltip {
+  display:none; position:absolute; bottom:calc(100% + 8px); left:50%;
+  transform:translateX(-50%); background:#1a1d27; border:1px solid #ef4444;
+  border-radius:10px; padding:12px 14px; width:230px; z-index:200;
+  font-size:11px; color:var(--text); pointer-events:none;
+  box-shadow:0 8px 24px #0008;
+}
+.short-tooltip::after {
+  content:""; position:absolute; top:100%; left:50%; transform:translateX(-50%);
+  border:6px solid transparent; border-top-color:#ef4444;
+}
+.short-wrap:hover .short-tooltip { display:block; }
+.short-counter { font-weight:700; font-size:12px; margin-bottom:8px;
+                 padding-bottom:7px; border-bottom:1px solid var(--border); color:#f87171; }
 </style>
 </head>
 <body>
@@ -435,6 +460,11 @@ function renderTable() {
       const bv = btData[b.ticker]?.win_rate ?? -1;
       return sortDir * (bv - av);
     }
+    if(sortKey === "short_count") {
+      const av = a.short_enabled ? (a.short?.count ?? -1) : -99;
+      const bv = b.short_enabled ? (b.short?.count ?? -1) : -99;
+      return sortDir * (bv - av);
+    }
     let va=a[sortKey],vb=b[sortKey];
     if(typeof va==="string") return sortDir*va.localeCompare(vb);
     return sortDir*(vb-va);
@@ -446,6 +476,7 @@ function renderTable() {
   const cols = [
     {key:"semaforo_count", label:"Segnale"},
     {key:"rb_count",       label:"Confidenza"},
+    {key:"short_count",    label:"SHORT"},
     {key:"name",           label:"Asset"},
     {key:"score",          label:"Score"},
     {key:"price",          label:"Prezzo"},
@@ -495,6 +526,23 @@ function renderTable() {
          </div>`
       : `<span style="color:var(--border);font-size:10px">${rb.count}/7</span>`;
 
+    const sh = row.short;
+    const shCell = !row.short_enabled
+      ? `<span style="color:var(--border)">—</span>`
+      : (sh && sh.show)
+        ? `<div class="short-wrap">
+             <span class="short-btn">▼ SHORT</span>
+             <div class="short-tooltip">
+               <div class="short-counter">${sh.count}/7 criteri short</div>
+               ${Object.entries(sh.criteria).map(([k,v])=>`
+                 <div class="rb-row">
+                   <span class="dot" style="background:${v?'var(--red)':'var(--muted)'}"></span>
+                   <span style="color:${v?'var(--text)':'var(--muted)'}">${k}</span>
+                 </div>`).join("")}
+             </div>
+           </div>`
+        : `<span style="color:var(--border);font-size:10px">${sh ? sh.count : 0}/7</span>`;
+
     html+=`<tr data-ticker="${row.ticker}" data-name="${row.name}">
       <td class="semaforo-cell">
         <div class="semaforo-circle" style="background:${bg};color:${sc};--sc:${sc}44">
@@ -504,6 +552,7 @@ function renderTable() {
         <div class="semaforo-sub">/7</div>
       </td>
       <td style="text-align:center">${rbCell}</td>
+      <td style="text-align:center">${shCell}</td>
       <td>
         <span style="font-weight:600">${row.name}</span><br>
         <span style="color:var(--muted);font-size:10px">${row.ticker} · <span class="cat-chip">${row.category}</span></span>
@@ -618,16 +667,24 @@ async function openModal(ticker,name,rowData){
       <div class="chart-box chart-section"><h3>Stochastic RSI</h3><canvas id="cStoch"></canvas></div>
     </div>
 
-    <!-- BACKTEST -->
+    <!-- BACKTEST LONG -->
     <div class="bt-section">
       <h3>Backtest storico — 3 anni settimanali — Alta Confidenza (5+/7)</h3>
       <div id="btModalBody">${buildBtHtml(ticker, btData[ticker])}</div>
-    </div>`;
+    </div>
+    ${rowData.short_enabled ? `
+    <!-- BACKTEST SHORT -->
+    <div class="bt-section" style="border-color:#ef444433;margin-top:10px">
+      <h3 style="color:#f87171">Backtest SHORT — 3 anni settimanali (5+/7)</h3>
+      <div id="btShortBody">${buildBtHtml(ticker, btData[ticker]?.short, true)}</div>
+    </div>` : ''}`;
 
   buildLWChart(d);
   buildCJCharts(d);
   const _bt = btData[ticker];
-  if(btReady && _bt && _bt.signals > 0) buildEquityCurve(_bt.equity_curve);
+  if(btReady && _bt && _bt.signals > 0) buildEquityCurve(_bt.equity_curve, "cEquity");
+  if(rowData.short_enabled && btReady && _bt?.short && _bt.short.signals > 0)
+    buildEquityCurve(_bt.short.equity_curve, "cEquityShort");
 }
 
 function indCard(label, value, color, hint) {
@@ -745,11 +802,11 @@ function buildCJCharts(d) {
 }
 
 // ── BACKTEST SECTION IN MODAL ────────────────────────────────────────────────
-function buildBtHtml(ticker, bt) {
+function buildBtHtml(ticker, bt, isShort = false) {
   if(!btReady)
     return `<div style="color:var(--muted);padding:8px 0;font-size:12px">Analisi storica in corso... (pronto tra qualche minuto)</div>`;
   if(!bt || bt.signals === 0)
-    return `<div style="color:var(--muted);padding:8px 0;font-size:12px">Nessun segnale Alta Confidenza nei 3 anni analizzati.</div>`;
+    return `<div style="color:var(--muted);padding:8px 0;font-size:12px">Nessun segnale ${isShort ? 'SHORT' : 'Alta Confidenza'} nei 3 anni analizzati.</div>`;
 
   const wc = relColor(bt.win_rate);
   const tc = bt.total_return >= 0 ? "var(--green)" : "var(--red)";
@@ -771,7 +828,7 @@ function buildBtHtml(ticker, bt) {
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">
         Equity curve — &euro;1000 investiti ad ogni segnale
       </div>
-      <canvas id="cEquity" style="max-height:140px"></canvas>
+      <canvas id="${isShort ? 'cEquityShort' : 'cEquity'}" style="max-height:140px"></canvas>
     </div>
     <div class="bt-trade-wrap">
       <table class="bt-trade-table">
@@ -800,9 +857,9 @@ function btCard(label, value, color) {
   </div>`;
 }
 
-function buildEquityCurve(curve) {
+function buildEquityCurve(curve, canvasId = "cEquity") {
   if(!curve || curve.length < 2) return;
-  const ctx = document.getElementById("cEquity");
+  const ctx = document.getElementById(canvasId);
   if(!ctx) return;
   const gc = "#1e2030", tc = "#64748b";
   const startVal = 1000;

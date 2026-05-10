@@ -124,12 +124,14 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     price_above_ema50 = (ema50 is not None) and price > ema50
     price_above_vwap  = (vwap is not None) and price > vwap
 
+    rsi_prev      = prev(rsi_s)
     cci_prev      = prev(cci_s)
     stoch_k_prev  = (prev(stoch_o.stochrsi_k()) or 0.5) * 100
     macd_hist_s   = macd_o.macd_diff()
     macd_hist_now = float(macd_hist_s.iloc[-1]) if pd.notna(macd_hist_s.iloc[-1]) else 0
     macd_hist_prv = float(macd_hist_s.iloc[-2]) if len(macd_hist_s) >= 2 and pd.notna(macd_hist_s.iloc[-2]) else 0
 
+    rsi_falling       = (rsi or 50) < (rsi_prev or 50)
     cci_rising        = (cci or 0) > (cci_prev or 0)
     stoch_rising      = stoch_k_pct > stoch_k_prev
     macd_div_positive = macd_hist_now > macd_hist_prv
@@ -155,6 +157,7 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         "price_above_ema50":   price_above_ema50,
         "price_above_vwap":    price_above_vwap,
         "vwap":                round(vwap, 4) if vwap else None,
+        "rsi_falling":         rsi_falling,
         "stoch_k":             round(stoch_k_pct, 2),
         "stoch_d":             round(stoch_d_pct, 2),
         "stoch_rising":        stoch_rising,
@@ -207,6 +210,27 @@ def compute_rischio_basso(ind: dict) -> dict:
         return {"show": True,  "level": "alta", "label": "Alta Confidenza", "count": count, "criteria": criteria}
     else:
         return {"show": False, "level": "none", "label": "",                "count": count, "criteria": criteria}
+
+
+def compute_short(ind: dict) -> dict:
+    """
+    7 criteri SHORT per DAX e Gold — >=5/7 attiva il segnale.
+    Specchio inverso di compute_rischio_basso: condizioni di ipercomprato in esaurimento.
+    """
+    criteria = {
+        "RSI>65 discesa":     ind["rsi"] > 65 and ind["rsi_falling"],
+        "CCI>+100 discesa":   ind["cci"] > 100 and not ind["cci_rising"],
+        "StochK>80 discesa":  ind["stoch_k"] > 80 and not ind["stoch_rising"],
+        "Prezzo < EMA50":     not ind["price_above_ema50"],
+        "Volume > media":     ind["vol_ratio"] > 1.0,
+        "MACD div. negativa": not ind["macd_div_positive"],
+        "BB banda sup.>90%":  ind["bb_position"] > 90,
+    }
+    count = sum(criteria.values())
+    if count >= 5:
+        return {"show": True,  "level": "short", "label": "SHORT", "count": count, "criteria": criteria}
+    else:
+        return {"show": False, "level": "none",  "label": "",      "count": count, "criteria": criteria}
 
 
 def compute_score(ind: dict) -> int:
@@ -322,20 +346,25 @@ def analyze_all(assets: list, period: str = "2y") -> list:
     results = []
     for ticker, df in data_map.items():
         try:
-            ind           = compute_indicators(df)
-            score         = compute_score(ind)
-            semaforo      = compute_semaforo(ind)
-            rischio_basso = compute_rischio_basso(ind)
-            asset         = asset_map[ticker]
+            ind             = compute_indicators(df)
+            score           = compute_score(ind)
+            semaforo        = compute_semaforo(ind)
+            rischio_basso   = compute_rischio_basso(ind)
+            asset           = asset_map[ticker]
+            short_enabled   = asset.get("short_enabled", False)
+            short           = compute_short(ind) if short_enabled else \
+                              {"show": False, "level": "none", "label": "", "count": 0, "criteria": {}}
             results.append({
                 "ticker":        ticker,
                 "name":          asset["name"],
                 "category":      asset["category"],
+                "short_enabled": short_enabled,
                 "score":         score,
                 "signal":        signal_label(score),
                 "signal_color":  signal_color(score),
                 "semaforo":      semaforo,
                 "rischio_basso": rischio_basso,
+                "short":         short,
                 **ind,
             })
         except Exception:

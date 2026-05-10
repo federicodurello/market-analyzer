@@ -1,17 +1,17 @@
 ASSETS = [
     # --- DAX INDEX + ETF ---
-    {"ticker": "^GDAXI",    "name": "DAX 40 Index",             "category": "DAX"},
-    {"ticker": "EWG",       "name": "iShares MSCI Germany ETF", "category": "DAX"},
+    {"ticker": "^GDAXI",    "name": "DAX 40 Index",             "category": "DAX",       "short_enabled": True},
+    {"ticker": "EWG",       "name": "iShares MSCI Germany ETF", "category": "DAX",       "short_enabled": True},
 
     # --- DAX BLUE CHIP ---
-    {"ticker": "SIE.DE",    "name": "Siemens AG",               "category": "DAX"},
-    {"ticker": "ALV.DE",    "name": "Allianz SE",               "category": "DAX"},
-    {"ticker": "BMW.DE",    "name": "BMW Group",                "category": "DAX"},
-    {"ticker": "DTE.DE",    "name": "Deutsche Telekom",         "category": "DAX"},
+    {"ticker": "SIE.DE",    "name": "Siemens AG",               "category": "DAX",       "short_enabled": True},
+    {"ticker": "ALV.DE",    "name": "Allianz SE",               "category": "DAX",       "short_enabled": True},
+    {"ticker": "BMW.DE",    "name": "BMW Group",                "category": "DAX",       "short_enabled": True},
+    {"ticker": "DTE.DE",    "name": "Deutsche Telekom",         "category": "DAX",       "short_enabled": True},
 
     # --- ORO & METALLI ---
-    {"ticker": "GLD",       "name": "SPDR Gold Shares",         "category": "Commodity"},
-    {"ticker": "GC=F",      "name": "Oro (Futures)",            "category": "Commodity"},
+    {"ticker": "GLD",       "name": "SPDR Gold Shares",         "category": "Commodity", "short_enabled": True},
+    {"ticker": "GC=F",      "name": "Oro (Futures)",            "category": "Commodity", "short_enabled": True},
     {"ticker": "GDX",       "name": "VanEck Gold Miners ETF",   "category": "Commodity"},
     {"ticker": "SLV",       "name": "iShares Silver Trust",     "category": "Commodity"},
     {"ticker": "USO",       "name": "US Oil Fund (Petrolio)",   "category": "Commodity"},

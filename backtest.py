@@ -111,13 +111,115 @@ def backtest_asset(df: pd.DataFrame) -> dict:
     }
 
 
+def backtest_short_asset(df: pd.DataFrame) -> dict:
+    """
+    Vectorized backtest of SHORT signal (>=5/7) on weekly bars — no lookahead.
+    Wins when next-week price falls. Return = -(price_change).
+    """
+    if len(df) < 55:
+        return _empty()
+
+    close  = df["Close"]
+    high   = df["High"]
+    low    = df["Low"]
+    volume = df["Volume"]
+
+    rsi_s    = ta.momentum.RSIIndicator(close, window=14).rsi()
+    cci_s    = ta.trend.CCIIndicator(high, low, close, window=14).cci()
+    macd_o   = ta.trend.MACD(close, window_slow=26, window_fast=12, window_sign=9)
+    bb       = ta.volatility.BollingerBands(close, window=20, window_dev=2)
+    ema50_s  = ta.trend.EMAIndicator(close, window=50).ema_indicator()
+    stoch_o  = ta.momentum.StochRSIIndicator(close, window=14, smooth1=3, smooth2=3)
+
+    stoch_k   = stoch_o.stochrsi_k() * 100
+    macd_hist = macd_o.macd_diff()
+    bb_lower  = bb.bollinger_lband()
+    bb_upper  = bb.bollinger_hband()
+    bb_range  = bb_upper - bb_lower
+    bb_pos    = ((close - bb_lower) / bb_range * 100).where(bb_range > 0, 50.0)
+
+    vol_avg   = volume.rolling(10, min_periods=5).mean().shift(1)
+    vol_ratio = (volume / vol_avg).where(vol_avg > 0, 1.0).fillna(1.0)
+
+    # SHORT — mirror of compute_short, signal at >=5
+    c1 = (rsi_s > 65)  & (rsi_s   < rsi_s.shift(1))       # RSI>65 falling
+    c2 = (cci_s > 100) & (cci_s   < cci_s.shift(1))       # CCI>+100 falling
+    c3 = (stoch_k > 80) & (stoch_k < stoch_k.shift(1))    # StochK>80 falling
+    c4 = close < ema50_s                                    # price < EMA50
+    c5 = vol_ratio > 1.0                                    # volume > average
+    c6 = macd_hist < macd_hist.shift(1)                    # MACD negative divergence
+    c7 = bb_pos > 90                                        # price near upper band
+
+    score  = c1.astype(int) + c2.astype(int) + c3.astype(int) + c4.astype(int) + \
+             c5.astype(int) + c6.astype(int) + c7.astype(int)
+    signal = score >= 5
+
+    next_ret = close.pct_change().shift(-1) * 100
+    valid    = signal & next_ret.notna()
+
+    signal_idx = df.index[valid]
+    if len(signal_idx) == 0:
+        return _empty()
+
+    trades       = []
+    equity       = 1.0
+    peak         = 1.0
+    max_dd       = 0.0
+    equity_curve = [{"time": str(df.index[0].date()), "value": 1.0}]
+
+    for idx in signal_idx:
+        pos   = df.index.get_loc(idx)
+        if pos >= len(df) - 1:
+            continue
+        entry = float(close.iloc[pos])
+        exit_ = float(close.iloc[pos + 1])
+        ret   = -((exit_ - entry) / entry * 100)   # short: profit when price falls
+
+        equity *= 1 + ret / 100
+        peak    = max(peak, equity)
+        dd      = (equity - peak) / peak * 100
+        max_dd  = min(max_dd, dd)
+
+        trades.append({
+            "date":  df.index[pos].strftime("%Y-%m-%d"),
+            "entry": round(entry, 4),
+            "exit":  round(exit_, 4),
+            "ret":   round(ret, 2),
+        })
+        equity_curve.append({
+            "time":  df.index[pos + 1].strftime("%Y-%m-%d"),
+            "value": round(equity, 4),
+        })
+
+    if not trades:
+        return _empty()
+
+    rets = [t["ret"] for t in trades]
+    wins = sum(1 for r in rets if r > 0)
+
+    return {
+        "signals":      len(trades),
+        "win_rate":     round(wins / len(trades) * 100, 1),
+        "avg_return":   round(sum(rets) / len(rets), 2),
+        "total_return": round((equity - 1) * 100, 2),
+        "max_drawdown": round(max_dd, 2),
+        "best_trade":   round(max(rets), 2),
+        "worst_trade":  round(min(rets), 2),
+        "trades":       trades,
+        "equity_curve": equity_curve,
+    }
+
+
 def backtest_all(assets: list) -> dict:
-    tickers  = [a["ticker"] for a in assets]
-    data_map = fetch_all(tickers, "3y")
-    results  = {}
+    tickers       = [a["ticker"] for a in assets]
+    short_tickers = {a["ticker"] for a in assets if a.get("short_enabled")}
+    data_map      = fetch_all(tickers, "3y")
+    results       = {}
     for ticker, df in data_map.items():
         try:
-            results[ticker] = backtest_asset(df)
+            long_bt  = backtest_asset(df)
+            short_bt = backtest_short_asset(df) if ticker in short_tickers else None
+            results[ticker] = {**long_bt, "short": short_bt}
         except Exception:
-            results[ticker] = _empty()
+            results[ticker] = {**_empty(), "short": None}
     return results
