@@ -2,6 +2,11 @@ import pandas as pd
 import ta
 from analyzer import fetch_all
 
+# Holding della posizione dopo il segnale, in giorni di borsa.
+# Calibrato su 3 anni di storico (vedi calibrate.py): l'edge dei segnali long
+# si manifesta su ~5 giorni, non sul giorno successivo.
+HOLD_DAYS = 5
+
 
 def _empty() -> dict:
     return {
@@ -15,7 +20,7 @@ def backtest_asset(df: pd.DataFrame) -> dict:
     """
     Vectorized backtest of Alta Confidenza (>=5/7) on daily bars — no lookahead.
     Signal = at least 5 of 7 criteria from compute_rischio_basso satisfied.
-    Measures next-day return after each signal.
+    Holding = HOLD_DAYS giorni; segnali dentro una posizione aperta scartati.
     """
     if len(df) < 55:
         return _empty()
@@ -55,8 +60,8 @@ def backtest_asset(df: pd.DataFrame) -> dict:
     score  = c1.astype(int) + c2.astype(int) + c3.astype(int) + c4.astype(int) + \
              c5.astype(int) + c6.astype(int) + c7.astype(int)
     signal = score >= 5
-    next_ret = close.pct_change().shift(-1) * 100   # next-bar return, no lookahead
-    valid    = signal & next_ret.notna()
+    fwd_ret = (close.shift(-HOLD_DAYS) / close - 1) * 100   # rendimento a HOLD_DAYS giorni
+    valid   = signal & fwd_ret.notna()
 
     signal_idx = df.index[valid]
     if len(signal_idx) == 0:
@@ -68,12 +73,17 @@ def backtest_asset(df: pd.DataFrame) -> dict:
     max_dd       = 0.0
     equity_curve = [{"time": str(df.index[0].date()), "value": 1.0}]
 
+    last_exit = -1
     for idx in signal_idx:
-        pos   = df.index.get_loc(idx)
-        if pos >= len(df) - 1:
+        pos = df.index.get_loc(idx)
+        if pos >= len(df) - HOLD_DAYS:
             continue
+        if pos <= last_exit:          # segnale dentro una posizione gia' aperta
+            continue
+        exit_pos  = pos + HOLD_DAYS
+        last_exit = exit_pos
         entry = float(close.iloc[pos])
-        exit_ = float(close.iloc[pos + 1])
+        exit_ = float(close.iloc[exit_pos])
         ret   = (exit_ - entry) / entry * 100
 
         equity *= 1 + ret / 100
@@ -88,7 +98,7 @@ def backtest_asset(df: pd.DataFrame) -> dict:
             "ret":   round(ret, 2),
         })
         equity_curve.append({
-            "time":  df.index[pos + 1].strftime("%Y-%m-%d"),
+            "time":  df.index[exit_pos].strftime("%Y-%m-%d"),
             "value": round(equity, 4),
         })
 
@@ -114,7 +124,7 @@ def backtest_asset(df: pd.DataFrame) -> dict:
 def backtest_short_asset(df: pd.DataFrame) -> dict:
     """
     Vectorized backtest of SHORT signal (>=5/7) on daily bars — no lookahead.
-    Wins when next-day price falls. Return = -(price_change).
+    Holding = HOLD_DAYS giorni. Profitto se il prezzo scende.
     """
     if len(df) < 55:
         return _empty()
@@ -154,8 +164,8 @@ def backtest_short_asset(df: pd.DataFrame) -> dict:
              c5.astype(int) + c6.astype(int) + c7.astype(int)
     signal = score >= 5
 
-    next_ret = close.pct_change().shift(-1) * 100
-    valid    = signal & next_ret.notna()
+    fwd_ret = (close.shift(-HOLD_DAYS) / close - 1) * 100
+    valid   = signal & fwd_ret.notna()
 
     signal_idx = df.index[valid]
     if len(signal_idx) == 0:
@@ -167,13 +177,18 @@ def backtest_short_asset(df: pd.DataFrame) -> dict:
     max_dd       = 0.0
     equity_curve = [{"time": str(df.index[0].date()), "value": 1.0}]
 
+    last_exit = -1
     for idx in signal_idx:
-        pos   = df.index.get_loc(idx)
-        if pos >= len(df) - 1:
+        pos = df.index.get_loc(idx)
+        if pos >= len(df) - HOLD_DAYS:
             continue
+        if pos <= last_exit:          # segnale dentro una posizione gia' aperta
+            continue
+        exit_pos  = pos + HOLD_DAYS
+        last_exit = exit_pos
         entry = float(close.iloc[pos])
-        exit_ = float(close.iloc[pos + 1])
-        ret   = -((exit_ - entry) / entry * 100)   # short: profit when price falls
+        exit_ = float(close.iloc[exit_pos])
+        ret   = -((exit_ - entry) / entry * 100)   # short: profitto se il prezzo scende
 
         equity *= 1 + ret / 100
         peak    = max(peak, equity)
@@ -187,7 +202,7 @@ def backtest_short_asset(df: pd.DataFrame) -> dict:
             "ret":   round(ret, 2),
         })
         equity_curve.append({
-            "time":  df.index[pos + 1].strftime("%Y-%m-%d"),
+            "time":  df.index[exit_pos].strftime("%Y-%m-%d"),
             "value": round(equity, 4),
         })
 

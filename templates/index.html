@@ -658,13 +658,13 @@ async function openModal(ticker,name,rowData){
 
     <!-- BACKTEST LONG -->
     <div class="bt-section">
-      <h3>Backtest storico — 3 anni · giornaliero — Alta Confidenza (5+/7)</h3>
+      <h3>Backtest storico — 3 anni · daily · holding 5 giorni — Alta Confidenza (5+/7)</h3>
       <div id="btModalBody">${buildBtHtml(ticker, btData[ticker])}</div>
     </div>
     ${rowData.short_enabled ? `
     <!-- BACKTEST SHORT -->
     <div class="bt-section" style="border-color:#ef444433;margin-top:10px">
-      <h3 style="color:#f87171">Backtest SHORT — 3 anni · giornaliero (5+/7)</h3>
+      <h3 style="color:#f87171">Backtest SHORT — 3 anni · daily · holding 5 giorni (5+/7)</h3>
       <div id="btShortBody">${buildBtHtml(ticker, btData[ticker]?.short, true)}</div>
     </div>` : ''}`;
 
@@ -822,7 +822,7 @@ function buildBtHtml(ticker, bt, isShort = false) {
     <div class="bt-trade-wrap">
       <table class="bt-trade-table">
         <thead><tr>
-          <th>Data segnale</th><th>Entrata</th><th>Uscita (giorno succ.)</th><th>Rendimento</th>
+          <th>Data segnale</th><th>Entrata</th><th>Uscita (+5 giorni)</th><th>Rendimento</th>
         </tr></thead>
         <tbody>
           ${bt.trades.map(t=>`
