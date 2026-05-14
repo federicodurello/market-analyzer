@@ -7,8 +7,14 @@ import time
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
-PERIODS = ["1mo", "3mo", "6mo", "1y", "2y"]
+PERIODS = ["6mo", "1y", "2y"]
 DEFAULT_PERIOD = "2y"
+
+# Refresh automatico dei dati ogni REFRESH_SECONDS.
+# Nota: i dati di mercato gratuiti (Yahoo) sono comunque ritardati di ~15 min,
+# quindi refresh piu' frequenti non darebbero dati piu' "freschi" — solo piu' richieste.
+REFRESH_SECONDS  = 90
+BACKTEST_SECONDS = 1800   # il backtest 3y e' pesante: si rilancia ogni 30 min
 
 _cache      = {"data": {}, "last_update": None, "next_update": None, "loading": True}
 _cache_lock = threading.Lock()
@@ -18,28 +24,20 @@ _bt_cache = {"data": {}, "ready": False}
 _bt_lock  = threading.Lock()
 
 
-def _next_monday_9am() -> datetime:
-    now = datetime.now()
-    weekday = now.weekday()  # 0=Mon, 6=Sun
-    if weekday == 0:
-        nine_am = now.replace(hour=9, minute=0, second=0, microsecond=0)
-        days_ahead = 0 if now < nine_am else 7
-    else:
-        days_ahead = (7 - weekday) % 7
-    target = (now + timedelta(days=days_ahead)).replace(hour=9, minute=0, second=0, microsecond=0)
-    return target
-
-
-def _do_refresh(period: str = DEFAULT_PERIOD):
+def _do_refresh():
+    """Ricarica DEFAULT_PERIOD + ogni periodo gia' richiesto, cosi' tutte le viste restano fresche."""
     with _cache_lock:
         _cache["loading"] = True
-    results  = analyze_all(ASSETS, period)
-    next_upd = _next_monday_9am()
+        periods = set(_cache["data"].keys()) | {DEFAULT_PERIOD}
+    for period in periods:
+        results = analyze_all(ASSETS, period)
+        with _cache_lock:
+            _cache["data"][period] = results
+    next_upd = datetime.now() + timedelta(seconds=REFRESH_SECONDS)
     with _cache_lock:
-        _cache["data"][period] = results
-        _cache["last_update"]  = datetime.now().isoformat()
-        _cache["next_update"]  = next_upd.isoformat()
-        _cache["loading"]      = False
+        _cache["last_update"] = datetime.now().isoformat()
+        _cache["next_update"] = next_upd.isoformat()
+        _cache["loading"]     = False
     _ready.set()
 
 
@@ -53,15 +51,15 @@ def _run_backtest():
 
 
 def _bg_loop():
-    _do_refresh(DEFAULT_PERIOD)
+    _do_refresh()
     threading.Thread(target=_run_backtest, daemon=True).start()
+    last_bt = time.time()
     while True:
-        next_mon = _next_monday_9am()
-        wait = (next_mon - datetime.now()).total_seconds()
-        if wait > 0:
-            time.sleep(wait)
-        _do_refresh(DEFAULT_PERIOD)
-        threading.Thread(target=_run_backtest, daemon=True).start()
+        time.sleep(REFRESH_SECONDS)
+        _do_refresh()
+        if time.time() - last_bt >= BACKTEST_SECONDS:
+            threading.Thread(target=_run_backtest, daemon=True).start()
+            last_bt = time.time()
 
 
 threading.Thread(target=_bg_loop, daemon=True).start()
@@ -121,8 +119,7 @@ def api_categories():
 
 @app.route("/api/refresh", methods=["POST"])
 def api_refresh():
-    period = request.args.get("period", DEFAULT_PERIOD)
-    threading.Thread(target=_do_refresh, args=(period,), daemon=True).start()
+    threading.Thread(target=_do_refresh, daemon=True).start()
     return jsonify({"status": "refreshing"})
 
 

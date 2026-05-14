@@ -13,9 +13,9 @@ def _empty() -> dict:
 
 def backtest_asset(df: pd.DataFrame) -> dict:
     """
-    Vectorized backtest of Alta Confidenza (>=5/7) on weekly bars — no lookahead.
+    Vectorized backtest of Alta Confidenza (>=5/7) on daily bars — no lookahead.
     Signal = at least 5 of 7 criteria from compute_rischio_basso satisfied.
-    Measures next-week return after each signal.
+    Measures next-day return after each signal.
     """
     if len(df) < 55:
         return _empty()
@@ -39,7 +39,7 @@ def backtest_asset(df: pd.DataFrame) -> dict:
     bb_range  = bb_upper - bb_lower
     bb_pos    = ((close - bb_lower) / bb_range * 100).where(bb_range > 0, 50.0)
 
-    # Volume vs 10-week avg — shift(1) keeps prior 10 bars, no lookahead
+    # Volume vs 10-day avg — shift(1) keeps prior 10 bars, no lookahead
     vol_avg   = volume.rolling(10, min_periods=5).mean().shift(1)
     vol_ratio = (volume / vol_avg).where(vol_avg > 0, 1.0).fillna(1.0)
 
@@ -113,8 +113,8 @@ def backtest_asset(df: pd.DataFrame) -> dict:
 
 def backtest_short_asset(df: pd.DataFrame) -> dict:
     """
-    Vectorized backtest of SHORT signal (>=5/7) on weekly bars — no lookahead.
-    Wins when next-week price falls. Return = -(price_change).
+    Vectorized backtest of SHORT signal (>=5/7) on daily bars — no lookahead.
+    Wins when next-day price falls. Return = -(price_change).
     """
     if len(df) < 55:
         return _empty()

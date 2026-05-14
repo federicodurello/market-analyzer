@@ -1,5 +1,5 @@
 ASSETS = [
-    # --- DAX INDEX + ETF ---
+    # --- DAX INDEX + ETF (priorita') ---
     {"ticker": "^GDAXI",    "name": "DAX 40 Index",             "category": "DAX",       "short_enabled": True},
     {"ticker": "EWG",       "name": "iShares MSCI Germany ETF", "category": "DAX",       "short_enabled": True},
 
@@ -16,24 +16,12 @@ ASSETS = [
     {"ticker": "SLV",       "name": "iShares Silver Trust",     "category": "Commodity"},
     {"ticker": "USO",       "name": "US Oil Fund (Petrolio)",   "category": "Commodity"},
 
-    # --- ETF GLOBALI ---
-    {"ticker": "SPY",       "name": "SPDR S&P 500",             "category": "ETF"},
-    {"ticker": "QQQ",       "name": "Invesco NASDAQ-100",       "category": "ETF"},
-    {"ticker": "VTI",       "name": "Vanguard Total Market",    "category": "ETF"},
+    # --- ETF GLOBALI (non-USA) ---
     {"ticker": "VWCE.DE",   "name": "Vanguard FTSE All-World",  "category": "ETF"},
     {"ticker": "IWDA.AS",   "name": "iShares Core MSCI World",  "category": "ETF"},
     {"ticker": "EEM",       "name": "iShares MSCI Emerg. Mkt",  "category": "ETF"},
 
-    # --- AZIONI USA ---
-    {"ticker": "AAPL",      "name": "Apple",                    "category": "Azione USA"},
-    {"ticker": "MSFT",      "name": "Microsoft",                "category": "Azione USA"},
-    {"ticker": "NVDA",      "name": "NVIDIA",                   "category": "Azione USA"},
-    {"ticker": "AMZN",      "name": "Amazon",                   "category": "Azione USA"},
-    {"ticker": "GOOGL",     "name": "Alphabet (Google)",        "category": "Azione USA"},
-    {"ticker": "META",      "name": "Meta Platforms",           "category": "Azione USA"},
-    {"ticker": "TSLA",      "name": "Tesla",                    "category": "Azione USA"},
-
-    # --- AZIONI EUROPEE (non USA) ---
+    # --- AZIONI EUROPEE ---
     {"ticker": "ASML.AS",   "name": "ASML Holding",             "category": "Azione EU"},
     {"ticker": "SAP.DE",    "name": "SAP SE",                   "category": "Azione EU"},
     {"ticker": "MC.PA",     "name": "LVMH",                     "category": "Azione EU"},

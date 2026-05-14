@@ -4,12 +4,12 @@ import ta
 
 
 def fetch_all(tickers: list[str], period: str = "2y") -> dict[str, pd.DataFrame]:
-    """Single batch download — weekly bars."""
+    """Single batch download — daily bars."""
     try:
         raw = yf.download(
             tickers,
             period=period,
-            interval="1wk",
+            interval="1d",
             progress=False,
             auto_adjust=True,
         )
@@ -29,7 +29,7 @@ def fetch_all(tickers: list[str], period: str = "2y") -> dict[str, pd.DataFrame]
         if "Close" not in df.columns and "Adj Close" in df.columns:
             df.rename(columns={"Adj Close": "Close"}, inplace=True)
         df.dropna(subset=["Close"], inplace=True)
-        if len(df) >= 15:
+        if len(df) >= 60:
             result[tickers[0]] = df
         return result
 
@@ -42,7 +42,7 @@ def fetch_all(tickers: list[str], period: str = "2y") -> dict[str, pd.DataFrame]
                 "Close":  raw["Close"][ticker],
                 "Volume": raw["Volume"][ticker],
             }).dropna(subset=["Close"])
-            if len(df) >= 15:
+            if len(df) >= 60:
                 result[ticker] = df
         except Exception:
             continue
@@ -59,7 +59,7 @@ def _clean(series, scale: float = 1.0) -> list:
 
 
 def compute_indicators(df: pd.DataFrame) -> dict:
-    """Indicatori ottimizzati per trading settimanale (timeframe 1W)."""
+    """Indicatori per trading giornaliero (timeframe 1D)."""
     close  = df["Close"]
     high   = df["High"]
     low    = df["Low"]
@@ -75,7 +75,7 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     stoch_o = ta.momentum.StochRSIIndicator(close, window=14, smooth1=3, smooth2=3)
     atr_s   = ta.volatility.AverageTrueRange(high, low, close, window=14).average_true_range()
 
-    # VWAP rolling 10 settimane
+    # VWAP rolling 10 giorni
     tp     = (high + low + close) / 3
     vwap_s = (tp * volume).rolling(10).sum() / volume.rolling(10).sum()
 
@@ -103,7 +103,7 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     atr       = last(atr_s)
     vwap      = last(vwap_s)
 
-    # volume vs media 10 settimane
+    # volume vs media 10 giorni
     avg_vol10 = float(volume.iloc[-11:-1].mean()) if len(volume) > 10 else float(volume.mean())
     vol_ratio = float(volume.iloc[-1]) / avg_vol10 if avg_vol10 > 0 else 1.0
 
@@ -172,7 +172,7 @@ def compute_indicators(df: pd.DataFrame) -> dict:
 
 
 def compute_semaforo(ind: dict) -> dict:
-    """7 condizioni di acquisto settimanale. Verde=5+, Giallo=2-4, Rosso=0-1."""
+    """7 condizioni di acquisto (giornaliero). Verde=5+, Giallo=2-4, Rosso=0-1."""
     conds = {
         "RSI<40":    ind["rsi"] < 40,
         "CCI<-100":  ind["cci"] < -100,

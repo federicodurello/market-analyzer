@@ -223,8 +223,6 @@ canvas { max-height:160px; }
   <div class="controls">
     <select id="catFilter"><option value="all">Tutte le categorie</option></select>
     <select id="periodSelect">
-      <option value="1mo">1 mese</option>
-      <option value="3mo">3 mesi</option>
       <option value="6mo">6 mesi</option>
       <option value="1y">1 anno</option>
       <option value="2y" selected>2 anni</option>
@@ -339,7 +337,7 @@ async function loadData(silent=false) {
     const status = await sRes.json();
 
     if(status.next_update) nextRefreshAt = new Date(status.next_update);
-    else nextRefreshAt = calcNextMonday9am();
+    else nextRefreshAt = calcNextRefresh();
 
     checkGreenTransitions(data);
     allData = data;
@@ -347,9 +345,9 @@ async function loadData(silent=false) {
     allData.forEach(d=>{ prevSemafori[d.ticker]=d.semaforo.level; });
 
     const now = new Date();
-    statusText.textContent   = `${data.length} asset analizzati — timeframe settimanale`;
-    lastUpdateEl.textContent = `Aggiornato: ${now.toLocaleDateString("it-IT")} ${now.toLocaleTimeString("it-IT")}`;
-    nextUpdateEl.textContent = `Prossimo: ${nextRefreshAt.toLocaleDateString("it-IT")} 09:00`;
+    statusText.textContent   = `${data.length} asset analizzati — timeframe giornaliero`;
+    lastUpdateEl.textContent = `Aggiornato: ${now.toLocaleTimeString("it-IT")} · dati ~15 min ritardati`;
+    nextUpdateEl.textContent = `Prossimo aggiornamento: ${nextRefreshAt.toLocaleTimeString("it-IT")}`;
     renderTable();
     scheduleNextRefresh();
     fetchBtData();
@@ -360,37 +358,25 @@ async function loadData(silent=false) {
   }
 }
 
-// ── AUTO-REFRESH (ogni lunedi 09:00 locale) ──────────────────────────────────
-function calcNextMonday9am() {
-  const now = new Date();
-  const day = now.getDay(); // 0=Dom, 1=Lun
-  let daysAhead;
-  if(day === 1){
-    const nine = new Date(now); nine.setHours(9,0,0,0);
-    daysAhead = now < nine ? 0 : 7;
-  } else {
-    daysAhead = (1 - day + 7) % 7;
-  }
-  const next = new Date(now);
-  next.setDate(next.getDate() + daysAhead);
-  next.setHours(9,0,0,0);
-  return next;
+// ── AUTO-REFRESH (ogni ~90 secondi) ──────────────────────────────────────────
+function calcNextRefresh() {
+  return new Date(Date.now() + 90000);
 }
 
 function scheduleNextRefresh() {
   if(refreshTmr)  clearInterval(refreshTmr);
   if(countdownTmr) clearInterval(countdownTmr);
 
-  if(!nextRefreshAt) nextRefreshAt = calcNextMonday9am();
+  if(!nextRefreshAt) nextRefreshAt = calcNextRefresh();
 
-  // Check every minute if it's time for the weekly refresh
+  // Controlla ogni 5s se e' ora del refresh automatico
   refreshTmr = setInterval(()=>{
     if(Date.now() >= nextRefreshAt.getTime()){
       clearInterval(refreshTmr); refreshTmr = null;
-      nextRefreshAt = calcNextMonday9am();
+      nextRefreshAt = calcNextRefresh();
       loadData(true);
     }
-  }, 60000);
+  }, 5000);
 
   countdownTmr = setInterval(()=>{
     const rem = Math.max(0, Math.round((nextRefreshAt.getTime()-Date.now())/1000));
@@ -455,6 +441,9 @@ function renderTable() {
   const cat = catFilter.value;
   let data  = cat==="all" ? allData : allData.filter(d=>d.category===cat);
   data = [...data].sort((a,b)=>{
+    // DAX sempre in cima (priorita')
+    const ad = a.category==="DAX"?0:1, bd = b.category==="DAX"?0:1;
+    if(ad!==bd) return ad-bd;
     if(sortKey === "reliability") {
       const av = btData[a.ticker]?.win_rate ?? -1;
       const bv = btData[b.ticker]?.win_rate ?? -1;
@@ -649,7 +638,7 @@ async function openModal(ticker,name,rowData){
       ${indCard("MACD", rowData.macd_bullish?"Bullish ↑":"Bearish ↓", rowData.macd_bullish?"var(--green)":"var(--red)", `Signal: ${rowData.macd_signal}`)}
       ${indCard("EMA trend", rowData.golden_cross?"Golden Cross ☀":rowData.ema_bullish?"Bullish ↑":"Bearish ↓", rowData.golden_cross?"var(--yellow)":rowData.ema_bullish?"var(--green)":"var(--red)", `10:${rowData.ema10} / 20:${rowData.ema20} / 50:${rowData.ema50}`)}
       ${indCard("ATR%", rowData.atr_pct+"%", rowData.atr_pct>3?"var(--yellow)":"var(--muted)", "Volatilità")}
-      ${indCard("Volume", rowData.vol_ratio+"×", rowData.vol_ratio>1.5?"var(--yellow)":"var(--muted)", "vs media 10 sett.")}
+      ${indCard("Volume", rowData.vol_ratio+"×", rowData.vol_ratio>1.5?"var(--yellow)":"var(--muted)", "vs media 10 giorni")}
       ${indCard("Score", rowData.score+"/100", rowData.signal_color, rowData.signal)}
     </div>
 
@@ -669,13 +658,13 @@ async function openModal(ticker,name,rowData){
 
     <!-- BACKTEST LONG -->
     <div class="bt-section">
-      <h3>Backtest storico — 3 anni settimanali — Alta Confidenza (5+/7)</h3>
+      <h3>Backtest storico — 3 anni · giornaliero — Alta Confidenza (5+/7)</h3>
       <div id="btModalBody">${buildBtHtml(ticker, btData[ticker])}</div>
     </div>
     ${rowData.short_enabled ? `
     <!-- BACKTEST SHORT -->
     <div class="bt-section" style="border-color:#ef444433;margin-top:10px">
-      <h3 style="color:#f87171">Backtest SHORT — 3 anni settimanali (5+/7)</h3>
+      <h3 style="color:#f87171">Backtest SHORT — 3 anni · giornaliero (5+/7)</h3>
       <div id="btShortBody">${buildBtHtml(ticker, btData[ticker]?.short, true)}</div>
     </div>` : ''}`;
 
@@ -833,7 +822,7 @@ function buildBtHtml(ticker, bt, isShort = false) {
     <div class="bt-trade-wrap">
       <table class="bt-trade-table">
         <thead><tr>
-          <th>Data segnale</th><th>Entrata</th><th>Uscita (sett. succ.)</th><th>Rendimento</th>
+          <th>Data segnale</th><th>Entrata</th><th>Uscita (giorno succ.)</th><th>Rendimento</th>
         </tr></thead>
         <tbody>
           ${bt.trades.map(t=>`
