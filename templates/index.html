@@ -935,18 +935,27 @@ function openChartWindow(ticker) {
   if (!overlay) {
     overlay = document.createElement("div");
     overlay.id = "fullChartOverlay";
-    overlay.style.cssText =
-      "position:fixed;inset:0;z-index:9999;background:#0f1117;display:flex;flex-direction:column";
+    // Stile robusto: posizionamento assoluto rispetto al viewport, dimensioni esplicite
+    overlay.style.cssText = [
+      "position:fixed",
+      "top:0","left:0","right:0","bottom:0",
+      "width:100vw","height:100vh",
+      "margin:0","padding:0",
+      "z-index:99999",
+      "background:#0f1117",
+      "display:flex","flex-direction:column",
+      "overflow:hidden",
+    ].join(";");
     overlay.innerHTML = `
-      <div style="padding:14px 22px;border-bottom:1px solid #2a2d3a;display:flex;align-items:baseline;gap:32px;flex-wrap:wrap;color:#e6e8ed;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
-        <h1 id="fcoTitle" style="margin:0;font-size:26px;font-weight:700;letter-spacing:.2px"></h1>
-        <span style="font-size:18px;color:#94a3b8">Spot <b id="fcoSpot" style="color:#e6e8ed;font-size:20px">—</b></span>
-        <span style="font-size:18px;color:#94a3b8">Call Wall <b id="fcoCw" style="color:#ef4444;font-size:20px">—</b></span>
-        <span style="font-size:18px;color:#94a3b8">Put Wall <b id="fcoPw" style="color:#22c55e;font-size:20px">—</b></span>
+      <div id="fcoHeader" style="flex:0 0 auto;padding:14px 22px;border-bottom:1px solid #2a2d3a;display:flex;align-items:baseline;gap:32px;flex-wrap:wrap;color:#e6e8ed;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+        <h1 id="fcoTitle" style="margin:0;font-size:26px;font-weight:700"></h1>
+        <span style="font-size:18px;color:#94a3b8">Spot <b id="fcoSpot" style="color:#e6e8ed;font-size:22px">—</b></span>
+        <span style="font-size:18px;color:#94a3b8">Call Wall <b id="fcoCw" style="color:#ef4444;font-size:22px">—</b></span>
+        <span style="font-size:18px;color:#94a3b8">Put Wall <b id="fcoPw" style="color:#22c55e;font-size:22px">—</b></span>
         <span id="fcoBadge" style="margin-left:auto;font-size:13px;color:#64748b"></span>
         <button onclick="closeFullChart()" style="font-size:15px;padding:8px 18px;background:#171923;color:#e6e8ed;border:1px solid #2a2d3a;border-radius:8px;cursor:pointer">✕ Chiudi (Esc)</button>
       </div>
-      <div id="fcoChart" style="flex:1;min-height:0"></div>
+      <div id="fcoChart" style="flex:1 1 auto;min-height:0;width:100%;position:relative"></div>
     `;
     document.body.appendChild(overlay);
     document.addEventListener("keydown", (e) => {
@@ -956,11 +965,13 @@ function openChartWindow(ticker) {
     });
   }
   overlay.style.display = "flex";
+  // Blocca lo scroll del body sottostante
+  document.body.style.overflow = "hidden";
   document.getElementById("fcoTitle").textContent = ticker;
   document.getElementById("fcoSpot").textContent = "—";
   document.getElementById("fcoCw").textContent = "—";
   document.getElementById("fcoPw").textContent = "—";
-  document.getElementById("fcoBadge").textContent = "";
+  document.getElementById("fcoBadge").textContent = "caricamento…";
   buildFullChart(ticker);
 }
 
@@ -968,46 +979,62 @@ function closeFullChart() {
   const o = document.getElementById("fullChartOverlay");
   if (o) {
     o.style.display = "none";
+    document.body.style.overflow = "";
     if (window._fcoChart) { window._fcoChart.remove(); window._fcoChart = null; }
+    if (window._fcoResizeObs) { window._fcoResizeObs.disconnect(); window._fcoResizeObs = null; }
     document.getElementById("fcoChart").innerHTML = "";
   }
 }
 
 async function buildFullChart(ticker) {
   const period = periodSelect ? periodSelect.value : "2y";
+
+  // 1) Dati prezzo
   let cd;
   try {
     cd = await fetch(`/api/chart/${encodeURIComponent(ticker)}?period=${period}`).then(r => r.json());
-  } catch { return; }
-  if (!cd || !cd.ohlcv) return;
+  } catch (e) {
+    document.getElementById("fcoBadge").textContent = "Errore caricamento dati prezzo";
+    return;
+  }
+  if (!cd || !cd.ohlcv || !cd.ohlcv.length) {
+    document.getElementById("fcoBadge").textContent = "Dati prezzo vuoti";
+    return;
+  }
 
   const container = document.getElementById("fcoChart");
-  if (window._fcoChart) window._fcoChart.remove();
+  if (window._fcoChart) { window._fcoChart.remove(); window._fcoChart = null; }
+  if (window._fcoResizeObs) { window._fcoResizeObs.disconnect(); window._fcoResizeObs = null; }
 
-  // Aspetta che il layout dell'overlay sia stato calcolato
-  await new Promise(r => requestAnimationFrame(() => r()));
+  // 2) Aspetta DUE frame: il primo per render dell'overlay, il secondo per layout flex
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  // 3) Misure effettive del container
+  const W = Math.max(container.clientWidth,  window.innerWidth);
+  const H = Math.max(container.clientHeight, window.innerHeight - 90);
+  console.log("[fco] container size:", W, "x", H, "data points:", cd.ohlcv.length);
 
   const chart = LightweightCharts.createChart(container, {
-    width: container.clientWidth,
-    height: container.clientHeight,
+    width: W,
+    height: H,
     layout: {
       background:{type:"solid",color:"#0f1117"},
-      textColor:"#cbd5e1",
-      fontSize: 16,
+      textColor:"#e2e8f0",
+      fontSize: 18,
       fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     },
     grid:   { vertLines:{color:"#1e2030"}, horzLines:{color:"#1e2030"} },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
     rightPriceScale: {
       borderColor:"#2a2d3a",
-      scaleMargins:{top:0.05,bottom:0.05},
+      scaleMargins:{top:0.08,bottom:0.08},
       entireTextOnly: true,
     },
     timeScale: {
       borderColor:"#2a2d3a",
       timeVisible:true,
       rightOffset:12,
-      barSpacing: 10,
+      barSpacing: 12,
       minBarSpacing: 4,
     },
   });
@@ -1020,45 +1047,64 @@ async function buildFullChart(ticker) {
   });
   candle.setData(cd.ohlcv);
 
-  if (cd.bb_upper) chart.addLineSeries({color:"#ef4444aa",lineWidth:2,lineStyle:2}).setData(cd.bb_upper);
-  if (cd.bb_lower) chart.addLineSeries({color:"#22c55eaa",lineWidth:2,lineStyle:2}).setData(cd.bb_lower);
-  if (cd.bb_mid)   chart.addLineSeries({color:"#fbbf24aa",lineWidth:2,lineStyle:3}).setData(cd.bb_mid);
-  if (cd.ema10)    chart.addLineSeries({color:"#6366f1",lineWidth:2.5}).setData(cd.ema10);
-  if (cd.ema20)    chart.addLineSeries({color:"#f97316",lineWidth:2.5}).setData(cd.ema20);
-  if (cd.ema50)    chart.addLineSeries({color:"#ef4444",lineWidth:2.5}).setData(cd.ema50);
+  if (cd.bb_upper) chart.addLineSeries({color:"#ef4444cc",lineWidth:2,lineStyle:2}).setData(cd.bb_upper);
+  if (cd.bb_lower) chart.addLineSeries({color:"#22c55ecc",lineWidth:2,lineStyle:2}).setData(cd.bb_lower);
+  if (cd.bb_mid)   chart.addLineSeries({color:"#fbbf24cc",lineWidth:2,lineStyle:3}).setData(cd.bb_mid);
+  if (cd.ema10)    chart.addLineSeries({color:"#6366f1",lineWidth:3}).setData(cd.ema10);
+  if (cd.ema20)    chart.addLineSeries({color:"#f97316",lineWidth:3}).setData(cd.ema20);
+  if (cd.ema50)    chart.addLineSeries({color:"#ef4444",lineWidth:3}).setData(cd.ema50);
 
-  // Zoom default: ultime ~180 candele (~ 6 mesi giornaliero), candele ben distanziate
+  // Zoom default: ultime ~120 candele (~ 5-6 mesi su daily)
   const total = cd.ohlcv.length;
-  const lookback = Math.min(180, total);
-  chart.timeScale().setVisibleLogicalRange({ from: total - lookback, to: total + 5 });
+  const lookback = Math.min(120, total);
+  chart.timeScale().setVisibleLogicalRange({ from: total - lookback, to: total + 6 });
 
-  const onResize = () => {
-    if (window._fcoChart) window._fcoChart.applyOptions({
-      width: container.clientWidth, height: container.clientHeight,
-    });
-  };
-  window.addEventListener("resize", onResize);
+  // 4) ResizeObserver: mantiene il chart aderente al container anche su rotazione/resize
+  const ro = new ResizeObserver(() => {
+    if (!window._fcoChart) return;
+    const w = container.clientWidth, h = container.clientHeight;
+    if (w > 0 && h > 0) window._fcoChart.applyOptions({ width: w, height: h });
+  });
+  ro.observe(container);
+  window._fcoResizeObs = ro;
 
+  // 5) GEX (linee Call Wall / Put Wall + valori in header)
+  document.getElementById("fcoBadge").textContent = "caricamento GEX…";
   try {
     const g = await fetch(`/api/gex/${encodeURIComponent(ticker)}`).then(r => r.json());
-    if (g && g.available) {
-      document.getElementById("fcoSpot").textContent = g.spot?.toLocaleString("it-IT") ?? "—";
-      if (g.call_wall != null) {
-        document.getElementById("fcoCw").textContent = g.call_wall.toLocaleString("it-IT");
-        candle.createPriceLine({ price:g.call_wall, color:"#ef4444", lineWidth:3,
-          lineStyle:0, axisLabelVisible:true, title:"Call Wall" });
-      }
-      if (g.put_wall != null) {
-        document.getElementById("fcoPw").textContent = g.put_wall.toLocaleString("it-IT");
-        candle.createPriceLine({ price:g.put_wall, color:"#22c55e", lineWidth:3,
-          lineStyle:0, axisLabelVisible:true, title:"Put Wall" });
-      }
-      const exp = Array.isArray(g.expiries_used) ? g.expiries_used.join(", ") : (g.expiries_used || "—");
-      const upd = g.last_update ? new Date(g.last_update).toLocaleString("it-IT") : "—";
+    console.log("[fco] gex response:", g);
+    if (!g || !g.available) {
       document.getElementById("fcoBadge").textContent =
-        `GEX · scadenze ${exp} · ${g.strikes_used} strike · ${g.note || ""} · aggiornato ${upd}`;
+        g?.reason ? `GEX non disponibile: ${g.reason}` : "GEX non disponibile per questo ticker";
+      return;
     }
-  } catch {}
+    document.getElementById("fcoSpot").textContent = g.spot?.toLocaleString("it-IT") ?? "—";
+    if (g.call_wall != null) {
+      document.getElementById("fcoCw").textContent = g.call_wall.toLocaleString("it-IT");
+      candle.createPriceLine({
+        price: g.call_wall, color: "#ef4444", lineWidth: 4,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        axisLabelVisible: true, title: `Call Wall ${g.call_wall.toLocaleString("it-IT")}`,
+        axisLabelColor: "#ef4444", axisLabelTextColor: "#ffffff",
+      });
+    }
+    if (g.put_wall != null) {
+      document.getElementById("fcoPw").textContent = g.put_wall.toLocaleString("it-IT");
+      candle.createPriceLine({
+        price: g.put_wall, color: "#22c55e", lineWidth: 4,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        axisLabelVisible: true, title: `Put Wall ${g.put_wall.toLocaleString("it-IT")}`,
+        axisLabelColor: "#22c55e", axisLabelTextColor: "#ffffff",
+      });
+    }
+    const exp = Array.isArray(g.expiries_used) ? g.expiries_used.join(", ") : (g.expiries_used || "—");
+    const upd = g.last_update ? new Date(g.last_update).toLocaleString("it-IT") : "—";
+    document.getElementById("fcoBadge").textContent =
+      `GEX · scadenze ${exp} · ${g.strikes_used} strike · ${g.note || ""} · aggiornato ${upd}`;
+  } catch (e) {
+    console.error("[fco] gex error:", e);
+    document.getElementById("fcoBadge").textContent = "Errore caricamento GEX: " + e.message;
+  }
 }
 
 function closeModal(){
