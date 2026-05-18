@@ -938,13 +938,13 @@ function openChartWindow(ticker) {
     overlay.style.cssText =
       "position:fixed;inset:0;z-index:9999;background:#0f1117;display:flex;flex-direction:column";
     overlay.innerHTML = `
-      <div style="padding:10px 16px;border-bottom:1px solid #2a2d3a;display:flex;align-items:baseline;gap:24px;flex-wrap:wrap;color:#e6e8ed;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
-        <h1 id="fcoTitle" style="margin:0;font-size:18px;font-weight:600"></h1>
-        <span style="font-size:13px;color:#64748b">Spot: <b id="fcoSpot" style="color:#e6e8ed">—</b></span>
-        <span style="font-size:13px;color:#64748b">Call Wall: <b id="fcoCw" style="color:#ef4444">—</b></span>
-        <span style="font-size:13px;color:#64748b">Put Wall: <b id="fcoPw" style="color:#22c55e">—</b></span>
-        <span id="fcoBadge" style="margin-left:auto;font-size:11px;color:#64748b"></span>
-        <button onclick="closeFullChart()" style="font-size:14px;padding:6px 14px;background:#171923;color:#e6e8ed;border:1px solid #2a2d3a;border-radius:6px;cursor:pointer">✕ Chiudi (Esc)</button>
+      <div style="padding:14px 22px;border-bottom:1px solid #2a2d3a;display:flex;align-items:baseline;gap:32px;flex-wrap:wrap;color:#e6e8ed;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+        <h1 id="fcoTitle" style="margin:0;font-size:26px;font-weight:700;letter-spacing:.2px"></h1>
+        <span style="font-size:18px;color:#94a3b8">Spot <b id="fcoSpot" style="color:#e6e8ed;font-size:20px">—</b></span>
+        <span style="font-size:18px;color:#94a3b8">Call Wall <b id="fcoCw" style="color:#ef4444;font-size:20px">—</b></span>
+        <span style="font-size:18px;color:#94a3b8">Put Wall <b id="fcoPw" style="color:#22c55e;font-size:20px">—</b></span>
+        <span id="fcoBadge" style="margin-left:auto;font-size:13px;color:#64748b"></span>
+        <button onclick="closeFullChart()" style="font-size:15px;padding:8px 18px;background:#171923;color:#e6e8ed;border:1px solid #2a2d3a;border-radius:8px;cursor:pointer">✕ Chiudi (Esc)</button>
       </div>
       <div id="fcoChart" style="flex:1;min-height:0"></div>
     `;
@@ -983,31 +983,55 @@ async function buildFullChart(ticker) {
 
   const container = document.getElementById("fcoChart");
   if (window._fcoChart) window._fcoChart.remove();
+
+  // Aspetta che il layout dell'overlay sia stato calcolato
+  await new Promise(r => requestAnimationFrame(() => r()));
+
   const chart = LightweightCharts.createChart(container, {
     width: container.clientWidth,
     height: container.clientHeight,
-    layout: { background:{type:"solid",color:"#0f1117"}, textColor:"#cbd5e1" },
+    layout: {
+      background:{type:"solid",color:"#0f1117"},
+      textColor:"#cbd5e1",
+      fontSize: 16,
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    },
     grid:   { vertLines:{color:"#1e2030"}, horzLines:{color:"#1e2030"} },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    rightPriceScale: { borderColor:"#2a2d3a", scaleMargins:{top:0.05,bottom:0.05} },
-    timeScale: { borderColor:"#2a2d3a", timeVisible:true, rightOffset:8 },
+    rightPriceScale: {
+      borderColor:"#2a2d3a",
+      scaleMargins:{top:0.05,bottom:0.05},
+      entireTextOnly: true,
+    },
+    timeScale: {
+      borderColor:"#2a2d3a",
+      timeVisible:true,
+      rightOffset:12,
+      barSpacing: 10,
+      minBarSpacing: 4,
+    },
   });
   window._fcoChart = chart;
 
   const candle = chart.addCandlestickSeries({
     upColor:"#22c55e", downColor:"#ef4444",
     borderVisible:false, wickUpColor:"#22c55e", wickDownColor:"#ef4444",
+    priceLineWidth: 2,
   });
   candle.setData(cd.ohlcv);
 
-  if (cd.bb_upper) chart.addLineSeries({color:"#ef444466",lineWidth:1,lineStyle:2}).setData(cd.bb_upper);
-  if (cd.bb_lower) chart.addLineSeries({color:"#22c55e66",lineWidth:1,lineStyle:2}).setData(cd.bb_lower);
-  if (cd.bb_mid)   chart.addLineSeries({color:"#fbbf2466",lineWidth:1,lineStyle:3}).setData(cd.bb_mid);
-  if (cd.ema10)    chart.addLineSeries({color:"#6366f1",lineWidth:1.5}).setData(cd.ema10);
-  if (cd.ema20)    chart.addLineSeries({color:"#f97316",lineWidth:1.5}).setData(cd.ema20);
-  if (cd.ema50)    chart.addLineSeries({color:"#ef4444",lineWidth:1.5}).setData(cd.ema50);
+  if (cd.bb_upper) chart.addLineSeries({color:"#ef4444aa",lineWidth:2,lineStyle:2}).setData(cd.bb_upper);
+  if (cd.bb_lower) chart.addLineSeries({color:"#22c55eaa",lineWidth:2,lineStyle:2}).setData(cd.bb_lower);
+  if (cd.bb_mid)   chart.addLineSeries({color:"#fbbf24aa",lineWidth:2,lineStyle:3}).setData(cd.bb_mid);
+  if (cd.ema10)    chart.addLineSeries({color:"#6366f1",lineWidth:2.5}).setData(cd.ema10);
+  if (cd.ema20)    chart.addLineSeries({color:"#f97316",lineWidth:2.5}).setData(cd.ema20);
+  if (cd.ema50)    chart.addLineSeries({color:"#ef4444",lineWidth:2.5}).setData(cd.ema50);
 
-  chart.timeScale().fitContent();
+  // Zoom default: ultime ~180 candele (~ 6 mesi giornaliero), candele ben distanziate
+  const total = cd.ohlcv.length;
+  const lookback = Math.min(180, total);
+  chart.timeScale().setVisibleLogicalRange({ from: total - lookback, to: total + 5 });
+
   const onResize = () => {
     if (window._fcoChart) window._fcoChart.applyOptions({
       width: container.clientWidth, height: container.clientHeight,
@@ -1021,12 +1045,12 @@ async function buildFullChart(ticker) {
       document.getElementById("fcoSpot").textContent = g.spot?.toLocaleString("it-IT") ?? "—";
       if (g.call_wall != null) {
         document.getElementById("fcoCw").textContent = g.call_wall.toLocaleString("it-IT");
-        candle.createPriceLine({ price:g.call_wall, color:"#ef4444", lineWidth:2,
+        candle.createPriceLine({ price:g.call_wall, color:"#ef4444", lineWidth:3,
           lineStyle:0, axisLabelVisible:true, title:"Call Wall" });
       }
       if (g.put_wall != null) {
         document.getElementById("fcoPw").textContent = g.put_wall.toLocaleString("it-IT");
-        candle.createPriceLine({ price:g.put_wall, color:"#22c55e", lineWidth:2,
+        candle.createPriceLine({ price:g.put_wall, color:"#22c55e", lineWidth:3,
           lineStyle:0, axisLabelVisible:true, title:"Put Wall" });
       }
       const exp = Array.isArray(g.expiries_used) ? g.expiries_used.join(", ") : (g.expiries_used || "—");
