@@ -648,10 +648,11 @@ async function openModal(ticker,name,rowData){
     <div class="chart-box chart-section" style="margin-bottom:10px">
       <h3 style="display:flex;align-items:center;gap:12px">
         <span>Prezzo — Candlestick + BB + EMA</span>
-        <button onclick="openChartWindow('${ticker}')"
-          style="margin-left:auto;font-size:11px;padding:5px 12px;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;text-transform:none;letter-spacing:0">
+        <a href="/chart/${encodeURIComponent(ticker)}" target="_blank" rel="noopener"
+          onclick="event.preventDefault(); openChartWindow('${ticker}'); return false;"
+          style="margin-left:auto;font-size:11px;padding:5px 12px;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;text-decoration:none;text-transform:none;letter-spacing:0">
           ↗ Apri in finestra grande
-        </button>
+        </a>
       </h3>
       <div id="lwChartContainer"></div>
     </div>
