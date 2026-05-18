@@ -172,7 +172,7 @@ tr:hover td { background: rgba(255,255,255,.03); cursor: pointer; }
 .charts-row-4 { grid-template-columns:1fr 1fr; }
 .charts-row-1 { grid-template-columns:1fr; }
 canvas { max-height:160px; }
-#lwChartContainer { height:320px; border-radius:8px; overflow:hidden; }
+#lwChartContainer { height:85vh; min-height:520px; border-radius:8px; overflow:hidden; }
 
 /* BACKTEST */
 .bt-stats { display:grid; grid-template-columns:repeat(auto-fill,minmax(110px,1fr)); gap:8px; margin-bottom:12px; }
@@ -271,6 +271,8 @@ let sortKey       = "score";
 let sortDir       = -1;
 let cjInstances   = {};
 let lwChart       = null;
+let lwCandle      = null;
+let lwGexLines    = [];
 let prevSemafori  = {};
 let nextRefreshAt = null;
 let countdownTmr  = null;
@@ -644,7 +646,13 @@ async function openModal(ticker,name,rowData){
 
     <!-- CANDLESTICK -->
     <div class="chart-box chart-section" style="margin-bottom:10px">
-      <h3>Prezzo — Candlestick + BB + EMA</h3>
+      <h3 style="display:flex;align-items:center;gap:12px">
+        <span>Prezzo — Candlestick + BB + EMA</span>
+        <button onclick="openChartWindow('${ticker}')"
+          style="margin-left:auto;font-size:11px;padding:5px 12px;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;text-transform:none;letter-spacing:0">
+          ↗ Apri in finestra grande
+        </button>
+      </h3>
       <div id="lwChartContainer"></div>
     </div>
 
@@ -670,6 +678,7 @@ async function openModal(ticker,name,rowData){
 
   buildLWChart(d);
   buildCJCharts(d);
+  loadGexOverlay(ticker);
   const _bt = btData[ticker];
   if(btReady && _bt && _bt.signals > 0) buildEquityCurve(_bt.equity_curve, "cEquity");
   if(rowData.short_enabled && btReady && _bt?.short && _bt.short.signals > 0)
@@ -689,7 +698,7 @@ function buildLWChart(d) {
   const container = document.getElementById("lwChartContainer");
   const opts = {
     width:  container.clientWidth,
-    height: 320,
+    height: container.clientHeight || 720,
     layout: { background:{type:"solid",color:"#0f1117"}, textColor:"#64748b" },
     grid:   { vertLines:{color:"#1e2030"}, horzLines:{color:"#1e2030"} },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
@@ -697,12 +706,14 @@ function buildLWChart(d) {
     timeScale: { borderColor:"#2a2d3a", timeVisible:true },
   };
   lwChart = LightweightCharts.createChart(container, opts);
+  lwGexLines = [];
 
   const candle = lwChart.addCandlestickSeries({
     upColor:"#22c55e", downColor:"#ef4444",
     borderVisible:false, wickUpColor:"#22c55e", wickDownColor:"#ef4444",
   });
   candle.setData(d.ohlcv);
+  lwCandle = candle;
 
   const bbU = lwChart.addLineSeries({color:"#ef444466",lineWidth:1,lineStyle:2});
   bbU.setData(d.bb_upper);
@@ -719,7 +730,10 @@ function buildLWChart(d) {
 
   lwChart.timeScale().fitContent();
   window.addEventListener("resize", ()=>{
-    if(lwChart) lwChart.applyOptions({width:container.clientWidth});
+    if(lwChart) lwChart.applyOptions({
+      width:  container.clientWidth,
+      height: container.clientHeight || 720,
+    });
   });
 }
 
@@ -878,6 +892,148 @@ function buildEquityCurve(curve, canvasId = "cEquity") {
       }
     }
   });
+}
+
+// ── GEX OVERLAY (Zero Gamma / Call Wall / Put Wall) ──────────────────────────
+async function loadGexOverlay(ticker) {
+  if (!lwCandle) return;
+  let g;
+  try {
+    g = await fetch(`/api/gex/${encodeURIComponent(ticker)}`).then(r => r.json());
+  } catch { return; }
+  if (!g || !g.available) return;
+
+  const draw = (price, color, title) => {
+    if (price == null) return;
+    const line = lwCandle.createPriceLine({
+      price, color, lineWidth: 2, lineStyle: 0,
+      axisLabelVisible: true, title,
+    });
+    lwGexLines.push(line);
+  };
+  draw(g.call_wall, "#ef4444", "Call Wall");
+  draw(g.put_wall,  "#22c55e", "Put Wall");
+
+  // Badge informativo sotto al titolo del chart
+  const section = document.querySelector("#lwChartContainer")?.parentElement;
+  if (section && !section.querySelector(".gex-badge")) {
+    const upd = g.last_update ? new Date(g.last_update).toLocaleString("it-IT") : "—";
+    const exp = Array.isArray(g.expiries_used) ? g.expiries_used.join(", ") : (g.expiries_used || "—");
+    const note = g.note ? ` · ${g.note}` : "";
+    const badge = document.createElement("div");
+    badge.className = "gex-badge";
+    badge.style.cssText = "font-size:10px;color:var(--muted);margin-top:4px";
+    badge.textContent = `GEX · scadenze ${exp} · ${g.strikes_used} strike${note} · aggiornato ${upd}`;
+    section.appendChild(badge);
+  }
+}
+
+function openChartWindow(ticker) {
+  // Overlay full-screen interno (no popup → niente blocchi del browser)
+  let overlay = document.getElementById("fullChartOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "fullChartOverlay";
+    overlay.style.cssText =
+      "position:fixed;inset:0;z-index:9999;background:#0f1117;display:flex;flex-direction:column";
+    overlay.innerHTML = `
+      <div style="padding:10px 16px;border-bottom:1px solid #2a2d3a;display:flex;align-items:baseline;gap:24px;flex-wrap:wrap;color:#e6e8ed;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+        <h1 id="fcoTitle" style="margin:0;font-size:18px;font-weight:600"></h1>
+        <span style="font-size:13px;color:#64748b">Spot: <b id="fcoSpot" style="color:#e6e8ed">—</b></span>
+        <span style="font-size:13px;color:#64748b">Call Wall: <b id="fcoCw" style="color:#ef4444">—</b></span>
+        <span style="font-size:13px;color:#64748b">Put Wall: <b id="fcoPw" style="color:#22c55e">—</b></span>
+        <span id="fcoBadge" style="margin-left:auto;font-size:11px;color:#64748b"></span>
+        <button onclick="closeFullChart()" style="font-size:14px;padding:6px 14px;background:#171923;color:#e6e8ed;border:1px solid #2a2d3a;border-radius:6px;cursor:pointer">✕ Chiudi (Esc)</button>
+      </div>
+      <div id="fcoChart" style="flex:1;min-height:0"></div>
+    `;
+    document.body.appendChild(overlay);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && document.getElementById("fullChartOverlay")?.style.display !== "none") {
+        closeFullChart();
+      }
+    });
+  }
+  overlay.style.display = "flex";
+  document.getElementById("fcoTitle").textContent = ticker;
+  document.getElementById("fcoSpot").textContent = "—";
+  document.getElementById("fcoCw").textContent = "—";
+  document.getElementById("fcoPw").textContent = "—";
+  document.getElementById("fcoBadge").textContent = "";
+  buildFullChart(ticker);
+}
+
+function closeFullChart() {
+  const o = document.getElementById("fullChartOverlay");
+  if (o) {
+    o.style.display = "none";
+    if (window._fcoChart) { window._fcoChart.remove(); window._fcoChart = null; }
+    document.getElementById("fcoChart").innerHTML = "";
+  }
+}
+
+async function buildFullChart(ticker) {
+  const period = periodSelect ? periodSelect.value : "2y";
+  let cd;
+  try {
+    cd = await fetch(`/api/chart/${encodeURIComponent(ticker)}?period=${period}`).then(r => r.json());
+  } catch { return; }
+  if (!cd || !cd.ohlcv) return;
+
+  const container = document.getElementById("fcoChart");
+  if (window._fcoChart) window._fcoChart.remove();
+  const chart = LightweightCharts.createChart(container, {
+    width: container.clientWidth,
+    height: container.clientHeight,
+    layout: { background:{type:"solid",color:"#0f1117"}, textColor:"#cbd5e1" },
+    grid:   { vertLines:{color:"#1e2030"}, horzLines:{color:"#1e2030"} },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor:"#2a2d3a", scaleMargins:{top:0.05,bottom:0.05} },
+    timeScale: { borderColor:"#2a2d3a", timeVisible:true, rightOffset:8 },
+  });
+  window._fcoChart = chart;
+
+  const candle = chart.addCandlestickSeries({
+    upColor:"#22c55e", downColor:"#ef4444",
+    borderVisible:false, wickUpColor:"#22c55e", wickDownColor:"#ef4444",
+  });
+  candle.setData(cd.ohlcv);
+
+  if (cd.bb_upper) chart.addLineSeries({color:"#ef444466",lineWidth:1,lineStyle:2}).setData(cd.bb_upper);
+  if (cd.bb_lower) chart.addLineSeries({color:"#22c55e66",lineWidth:1,lineStyle:2}).setData(cd.bb_lower);
+  if (cd.bb_mid)   chart.addLineSeries({color:"#fbbf2466",lineWidth:1,lineStyle:3}).setData(cd.bb_mid);
+  if (cd.ema10)    chart.addLineSeries({color:"#6366f1",lineWidth:1.5}).setData(cd.ema10);
+  if (cd.ema20)    chart.addLineSeries({color:"#f97316",lineWidth:1.5}).setData(cd.ema20);
+  if (cd.ema50)    chart.addLineSeries({color:"#ef4444",lineWidth:1.5}).setData(cd.ema50);
+
+  chart.timeScale().fitContent();
+  const onResize = () => {
+    if (window._fcoChart) window._fcoChart.applyOptions({
+      width: container.clientWidth, height: container.clientHeight,
+    });
+  };
+  window.addEventListener("resize", onResize);
+
+  try {
+    const g = await fetch(`/api/gex/${encodeURIComponent(ticker)}`).then(r => r.json());
+    if (g && g.available) {
+      document.getElementById("fcoSpot").textContent = g.spot?.toLocaleString("it-IT") ?? "—";
+      if (g.call_wall != null) {
+        document.getElementById("fcoCw").textContent = g.call_wall.toLocaleString("it-IT");
+        candle.createPriceLine({ price:g.call_wall, color:"#ef4444", lineWidth:2,
+          lineStyle:0, axisLabelVisible:true, title:"Call Wall" });
+      }
+      if (g.put_wall != null) {
+        document.getElementById("fcoPw").textContent = g.put_wall.toLocaleString("it-IT");
+        candle.createPriceLine({ price:g.put_wall, color:"#22c55e", lineWidth:2,
+          lineStyle:0, axisLabelVisible:true, title:"Put Wall" });
+      }
+      const exp = Array.isArray(g.expiries_used) ? g.expiries_used.join(", ") : (g.expiries_used || "—");
+      const upd = g.last_update ? new Date(g.last_update).toLocaleString("it-IT") : "—";
+      document.getElementById("fcoBadge").textContent =
+        `GEX · scadenze ${exp} · ${g.strikes_used} strike · ${g.note || ""} · aggiornato ${upd}`;
+    }
+  } catch {}
 }
 
 function closeModal(){

@@ -2,6 +2,7 @@ from flask import Flask, jsonify, render_template, request
 from analyzer import analyze_all, get_chart_data
 from assets import ASSETS
 from backtest import backtest_all as _backtest_all
+import gex as gex_mod
 import threading
 import time
 from datetime import datetime, timedelta
@@ -68,6 +69,12 @@ threading.Thread(target=_bg_loop, daemon=True).start()
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/chart/<path:ticker>")
+def chart_window(ticker):
+    """Pagina dedicata full-screen per il grafico di un ticker."""
+    return render_template("chart.html", ticker=ticker)
 
 
 @app.route("/api/status")
@@ -139,6 +146,23 @@ def api_backtest_ticker(ticker):
             "ready": _bt_cache["ready"],
             "data":  _bt_cache["data"].get(ticker),
         })
+
+
+@app.route("/api/gex/<path:ticker>")
+def api_gex(ticker):
+    """Gamma Exposure (Zero Gamma / Call Wall / Put Wall) via IBKR TWS.
+    Solo per i ticker mappati in gex.UNDERLYING_MAP."""
+    if not gex_mod.is_supported(ticker):
+        return jsonify({"available": False, "ticker": ticker,
+                        "reason": "ticker non supportato"})
+    force = request.args.get("refresh") == "1"
+    return jsonify(gex_mod.get_gex(ticker, force_refresh=force))
+
+
+@app.route("/api/gex/refresh", methods=["POST"])
+def api_gex_refresh():
+    threading.Thread(target=gex_mod.refresh_all_supported, daemon=True).start()
+    return jsonify({"status": "refreshing"})
 
 
 if __name__ == "__main__":
