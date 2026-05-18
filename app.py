@@ -8,6 +8,9 @@ import time
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
+# Ricarica i template da disco se cambiano (no riavvio necessario per modifiche HTML/JS)
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.jinja_env.auto_reload = True
 PERIODS = ["6mo", "1y", "2y"]
 DEFAULT_PERIOD = "2y"
 
