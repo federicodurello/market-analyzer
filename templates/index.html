@@ -929,25 +929,25 @@ async function loadGexOverlay(ticker) {
   }
 }
 
+const FCO_HEADER_H = 76; // px, altezza header overlay
+
 function openChartWindow(ticker) {
-  // Overlay full-screen interno (no popup → niente blocchi del browser)
+  // Overlay full-screen interno (no popup, layout senza flex)
   let overlay = document.getElementById("fullChartOverlay");
   if (!overlay) {
     overlay = document.createElement("div");
     overlay.id = "fullChartOverlay";
-    // Stile robusto: posizionamento assoluto rispetto al viewport, dimensioni esplicite
     overlay.style.cssText = [
-      "position:fixed",
-      "top:0","left:0","right:0","bottom:0",
-      "width:100vw","height:100vh",
-      "margin:0","padding:0",
-      "z-index:99999",
-      "background:#0f1117",
-      "display:flex","flex-direction:column",
-      "overflow:hidden",
+      "position:fixed","top:0","left:0","right:0","bottom:0",
+      "width:100vw","height:100vh","margin:0","padding:0",
+      "z-index:99999","background:#0f1117","overflow:hidden",
     ].join(";");
     overlay.innerHTML = `
-      <div id="fcoHeader" style="flex:0 0 auto;padding:14px 22px;border-bottom:1px solid #2a2d3a;display:flex;align-items:baseline;gap:32px;flex-wrap:wrap;color:#e6e8ed;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+      <div id="fcoHeader" style="position:absolute;top:0;left:0;right:0;height:${FCO_HEADER_H}px;
+           padding:14px 22px;border-bottom:1px solid #2a2d3a;
+           display:flex;align-items:center;gap:32px;flex-wrap:wrap;
+           color:#e6e8ed;font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+           box-sizing:border-box;background:#0f1117">
         <h1 id="fcoTitle" style="margin:0;font-size:26px;font-weight:700"></h1>
         <span style="font-size:18px;color:#94a3b8">Spot <b id="fcoSpot" style="color:#e6e8ed;font-size:22px">—</b></span>
         <span style="font-size:18px;color:#94a3b8">Call Wall <b id="fcoCw" style="color:#ef4444;font-size:22px">—</b></span>
@@ -955,7 +955,7 @@ function openChartWindow(ticker) {
         <span id="fcoBadge" style="margin-left:auto;font-size:13px;color:#64748b"></span>
         <button onclick="closeFullChart()" style="font-size:15px;padding:8px 18px;background:#171923;color:#e6e8ed;border:1px solid #2a2d3a;border-radius:8px;cursor:pointer">✕ Chiudi (Esc)</button>
       </div>
-      <div id="fcoChart" style="flex:1 1 auto;min-height:0;width:100%;position:relative"></div>
+      <div id="fcoChart" style="position:absolute;top:${FCO_HEADER_H}px;left:0;right:0;bottom:0"></div>
     `;
     document.body.appendChild(overlay);
     document.addEventListener("keydown", (e) => {
@@ -964,7 +964,7 @@ function openChartWindow(ticker) {
       }
     });
   }
-  overlay.style.display = "flex";
+  overlay.style.display = "block";
   // Blocca lo scroll del body sottostante
   document.body.style.overflow = "hidden";
   document.getElementById("fcoTitle").textContent = ticker;
@@ -981,7 +981,7 @@ function closeFullChart() {
     o.style.display = "none";
     document.body.style.overflow = "";
     if (window._fcoChart) { window._fcoChart.remove(); window._fcoChart = null; }
-    if (window._fcoResizeObs) { window._fcoResizeObs.disconnect(); window._fcoResizeObs = null; }
+    if (window._fcoResizeHandler) { window.removeEventListener("resize", window._fcoResizeHandler); window._fcoResizeHandler = null; }
     document.getElementById("fcoChart").innerHTML = "";
   }
 }
@@ -1006,13 +1006,10 @@ async function buildFullChart(ticker) {
   if (window._fcoChart) { window._fcoChart.remove(); window._fcoChart = null; }
   if (window._fcoResizeObs) { window._fcoResizeObs.disconnect(); window._fcoResizeObs = null; }
 
-  // 2) Aspetta DUE frame: il primo per render dell'overlay, il secondo per layout flex
-  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-  // 3) Misure effettive del container
-  const W = Math.max(container.clientWidth,  window.innerWidth);
-  const H = Math.max(container.clientHeight, window.innerHeight - 90);
-  console.log("[fco] container size:", W, "x", H, "data points:", cd.ohlcv.length);
+  // 2) Dimensioni esplicite dalla viewport (NO dipendenza da flex/measure container)
+  const W = window.innerWidth;
+  const H = window.innerHeight - FCO_HEADER_H;
+  document.getElementById("fcoBadge").textContent = `viewport ${W}×${H} · ${cd.ohlcv.length} candele · GEX in caricamento…`;
 
   const chart = LightweightCharts.createChart(container, {
     width: W,
@@ -1059,14 +1056,16 @@ async function buildFullChart(ticker) {
   const lookback = Math.min(120, total);
   chart.timeScale().setVisibleLogicalRange({ from: total - lookback, to: total + 6 });
 
-  // 4) ResizeObserver: mantiene il chart aderente al container anche su rotazione/resize
-  const ro = new ResizeObserver(() => {
+  // 4) Resize: ridimensiona alla nuova viewport quando l'utente cambia finestra
+  const onWinResize = () => {
     if (!window._fcoChart) return;
-    const w = container.clientWidth, h = container.clientHeight;
-    if (w > 0 && h > 0) window._fcoChart.applyOptions({ width: w, height: h });
-  });
-  ro.observe(container);
-  window._fcoResizeObs = ro;
+    window._fcoChart.applyOptions({
+      width:  window.innerWidth,
+      height: window.innerHeight - FCO_HEADER_H,
+    });
+  };
+  window.addEventListener("resize", onWinResize);
+  window._fcoResizeHandler = onWinResize;
 
   // 5) GEX (linee Call Wall / Put Wall + valori in header)
   document.getElementById("fcoBadge").textContent = "caricamento GEX…";
