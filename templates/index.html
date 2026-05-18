@@ -981,7 +981,6 @@ function closeFullChart() {
     o.style.display = "none";
     document.body.style.overflow = "";
     if (window._fcoChart) { window._fcoChart.remove(); window._fcoChart = null; }
-    if (window._fcoResizeHandler) { window.removeEventListener("resize", window._fcoResizeHandler); window._fcoResizeHandler = null; }
     document.getElementById("fcoChart").innerHTML = "";
   }
 }
@@ -1006,14 +1005,13 @@ async function buildFullChart(ticker) {
   if (window._fcoChart) { window._fcoChart.remove(); window._fcoChart = null; }
   if (window._fcoResizeObs) { window._fcoResizeObs.disconnect(); window._fcoResizeObs = null; }
 
-  // 2) Dimensioni esplicite dalla viewport (NO dipendenza da flex/measure container)
-  const W = window.innerWidth;
-  const H = window.innerHeight - FCO_HEADER_H;
-  document.getElementById("fcoBadge").textContent = `viewport ${W}×${H} · ${cd.ohlcv.length} candele · GEX in caricamento…`;
+  // 2) Niente width/height espliciti: lascio che Lightweight Charts si dimensioni
+  // automaticamente al container (autoSize: true) — il container ha dimensioni
+  // garantite da position:absolute top:76px bottom:0
+  document.getElementById("fcoBadge").textContent = `${cd.ohlcv.length} candele · GEX in caricamento…`;
 
   const chart = LightweightCharts.createChart(container, {
-    width: W,
-    height: H,
+    autoSize: true,
     layout: {
       background:{type:"solid",color:"#0f1117"},
       textColor:"#e2e8f0",
@@ -1056,16 +1054,8 @@ async function buildFullChart(ticker) {
   const lookback = Math.min(120, total);
   chart.timeScale().setVisibleLogicalRange({ from: total - lookback, to: total + 6 });
 
-  // 4) Resize: ridimensiona alla nuova viewport quando l'utente cambia finestra
-  const onWinResize = () => {
-    if (!window._fcoChart) return;
-    window._fcoChart.applyOptions({
-      width:  window.innerWidth,
-      height: window.innerHeight - FCO_HEADER_H,
-    });
-  };
-  window.addEventListener("resize", onWinResize);
-  window._fcoResizeHandler = onWinResize;
+  // 4) Resize: con autoSize:true la libreria si ridimensiona da sola via ResizeObserver.
+  //    Niente handler manuale necessario.
 
   // 5) GEX (linee Call Wall / Put Wall + valori in header)
   document.getElementById("fcoBadge").textContent = "caricamento GEX…";
